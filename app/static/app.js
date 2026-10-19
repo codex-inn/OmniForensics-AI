@@ -1,8 +1,26 @@
 let selected=null;
+const API_BASE=String(window.OMNIFORENSICS_API_BASE||"").replace(/\\/$/,"");
+const apiPath=path=>API_BASE+path;
+let authToken=sessionStorage.getItem("omni_api_auth")||"";
+function authHeader(){return authToken?{Authorization:"Basic "+authToken}:{}}
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function toast(message){const t=$("toast");t.textContent=message;t.style.display="block";setTimeout(()=>t.style.display="none",3500)}
-async function req(url,options={}){const response=await fetch(url,options);if(!response.ok){let data={};try{data=await response.json()}catch{}throw Error(data.detail||`Request failed ${response.status}`)}return response}
+async function req(url,options={}){
+ const target=apiPath(url);
+ const headers={...(options.headers||{}),...authHeader()};
+ let response=await fetch(target,{...options,headers});
+ if(response.status===401 && API_BASE && !authToken){
+  const username=prompt("OmniForensics API username (shared Render credential)");
+  if(username===null)throw Error("Login cancelled");
+  const password=prompt("OmniForensics API password");
+  if(password===null)throw Error("Login cancelled");
+  authToken=btoa(unescape(encodeURIComponent(username+":"+password)));
+  sessionStorage.setItem("omni_api_auth",authToken);
+  response=await fetch(target,{...options,headers:{...(options.headers||{}),...authHeader()}});
+ }
+ if(!response.ok){if(response.status===401){authToken="";sessionStorage.removeItem("omni_api_auth")}let data={};try{data=await response.json()}catch{}throw Error(data.detail||`Request failed ${response.status}`)}return response
+}
 async function refresh(){
  const query=$("caseSearch")?.value.trim()||"";
  const cases=await(await req("/api/cases"+(query?"?q="+encodeURIComponent(query):""))).json();
@@ -28,7 +46,7 @@ async function openCase(id){
  const data=await(await req(`/api/cases/${encodeURIComponent(id)}`)).json(),c=data.case;
  $("detail").innerHTML=`<h2>${esc(c.title)}</h2><p class="meta">${esc(c.id)} · ${esc(c.created_at)}<br>${esc(c.description||"No description")}</p>
  <div class="upload"><b>Upload evidence</b><p class="muted">Images, videos, documents, logs, PCAP and other files can be stored. Specialized analysis is optional and depends on installed tools/models.</p><form id="upload"><input type="file" id="file" required><button style="margin-top:10px">Upload & inspect</button></form></div>
- <div class="actions"><a class="tag" href="/api/cases/${encodeURIComponent(id)}/report" target="_blank" rel="noopener">Generate PDF report</a><a class="tag" href="/api/cases/${encodeURIComponent(id)}/manifest.json" target="_blank" rel="noopener">Export JSON manifest</a><button id="correlations" class="secondary">Find correlations</button></div>
+ <div class="actions"><a class="tag" href="${esc(apiPath(`/api/cases/${encodeURIComponent(id)}/report`))}" target="_blank" rel="noopener">Generate PDF report</a><a class="tag" href="${esc(apiPath(`/api/cases/${encodeURIComponent(id)}/manifest.json`))}" target="_blank" rel="noopener">Export JSON manifest</a><button id="correlations" class="secondary">Find correlations</button></div>
  <h2>Evidence inventory (${data.evidence.length})</h2>${data.evidence.map(evCard).join("")||'<p class="muted">No evidence uploaded.</p>'}<hr><h2>Investigator notes</h2><form id="note"><input id="noteBody" required maxlength="5000" placeholder="Record a factual observation or follow-up task"><button style="margin-top:8px">Add note</button></form>${data.notes.map(note=>`<div class="evidence"><p>${esc(note.body)}</p><small class="meta">${esc(note.created_at)}</small></div>`).join("")||'<p class="muted">No notes recorded.</p>'}
  <hr><h2>Audit & timeline</h2><div class="actions"><button id="audit" class="secondary">View audit log</button><button id="auditVerify" class="secondary">Verify audit chain</button><button id="timelineBtn" class="secondary">View timeline</button></div><pre id="auditText" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px"></pre>`;
  $("upload").onsubmit=async event=>{event.preventDefault();const file=$("file").files[0];const form=new FormData();form.append("file",file);try{const result=await(await req(`/api/cases/${encodeURIComponent(id)}/evidence`,{method:"POST",body:form})).json();toast("Uploaded. SHA-256 "+result.sha256.slice(0,12)+"…");await openCase(id)}catch(error){toast(error.message)}};
