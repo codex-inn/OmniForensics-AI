@@ -1,409 +1,167 @@
-import hashlib
-import json
-import re
-import uuid
-import os
-import secrets
 import base64
+import hashlib
+import io
+import os
+import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from xml.sax.saxutils import escape
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .config import ensure_dirs, EVIDENCE_DIR, REPORT_DIR, MAX_UPLOAD_BYTES
-from .db import connect, init_db
-from .forensics import inspect_file, sha256_file
-from .reports import build_report
+from PIL import Image, ExifTags
+from pypdf import PdfReader
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
 
-app = FastAPI(title="OmniForensics AI", version="0.4.0")
-
-# Set OMNIFORENSICS_CORS_ORIGINS to a comma-separated list of exact browser origins.
-# GitHub Pages project sites use the origin https://codex-inn.github.io (no repo path).
-_default_origins = "https://codex-inn.github.io,http://localhost:8000,http://127.0.0.1:8000"
-_allowed_origins = [origin.strip().rstrip("/") for origin in os.getenv("OMNIFORENSICS_CORS_ORIGINS", _default_origins).split(",") if origin.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-    max_age=600,
-)
+MAX_FILE_BYTES = int(os.getenv("OMNIFORENSICS_MAX_FILE_MB", "8")) * 1024 * 1024
+MAX_FILES = 5
+app = FastAPI(title="OmniForensics AI — Stateless Scene Analysis", version="1.0.0")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+origins = [x.strip().rstrip("/") for x in os.getenv("OMNIFORENSICS_CORS_ORIGINS", "https://codex-inn.github.io,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET","POST","OPTIONS"], allow_headers=["Content-Type","Authorization"], max_age=600)
 
-@app.middleware("http")
-async def website_security(request: Request, call_next):
-    # Public deployments must configure credentials before any case/evidence route is usable.
-    public_mode = os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true"
-    if request.method == "OPTIONS":
-        response = await call_next(request)
-    elif public_mode and request.url.path != "/api/health":
-        username = os.getenv("OMNIFORENSICS_USERNAME", "")
-        password = os.getenv("OMNIFORENSICS_PASSWORD", "")
-        if not username or not password:
-            response = JSONResponse({"detail": "Website access is not configured. Set OMNIFORENSICS_USERNAME and OMNIFORENSICS_PASSWORD in the hosting dashboard."}, status_code=503)
-        else:
-            header = request.headers.get("authorization", "")
-            supplied_user = supplied_password = ""
-            if header.startswith("Basic "):
-                try:
-                    decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
-                    supplied_user, supplied_password = decoded.split(":", 1)
-                except (ValueError, UnicodeDecodeError):
-                    pass
-            valid_user = secrets.compare_digest(supplied_user, username)
-            valid_password = secrets.compare_digest(supplied_password, password)
-            if not (valid_user and valid_password):
-                response = Response("Authentication required", status_code=401,
-                                    headers={"WWW-Authenticate": 'Basic realm="OmniForensics AI", charset="UTF-8"'})
-            else:
-                response = await call_next(request)
-    else:
-        response = await call_next(request)
+def secure(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("Cache-Control", "no-store, max-age=0")
+    response.headers.setdefault("Pragma", "no-cache")
     return response
 
-def now():
-    return datetime.now(timezone.utc).isoformat()
-
-def audit(case_id, event, details):
-    created = now()
-    details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    with connect() as conn:
-        previous = conn.execute("SELECT event_hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
-        prev_hash = previous["event_hash"] if previous and previous["event_hash"] else "GENESIS"
-        payload = json.dumps({"case_id": case_id, "event": event, "details_json": details_json,
-                              "created_at": created, "prev_hash": prev_hash},
-                             sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        event_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        conn.execute("INSERT INTO audit(case_id,event,details_json,created_at,prev_hash,event_hash) VALUES(?,?,?,?,?,?)",
-                     (case_id, event, details_json, created, prev_hash, event_hash))
-    return event_hash
-
-def case_or_404(case_id):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Case not found")
-    return dict(row)
-
-def evidence_or_404(evidence_id):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM evidence WHERE id=?", (evidence_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Evidence not found")
-    return dict(row)
-
-@app.on_event("startup")
-def startup():
-    ensure_dirs()
-    init_db()
+@app.middleware("http")
+async def security(request: Request, call_next):
+    length = request.headers.get("content-length")
+    if length:
+        try:
+            if int(length) > MAX_FILE_BYTES * MAX_FILES * 2 + 2_000_000:
+                return secure(JSONResponse({"detail":"Request too large"}, status_code=413))
+        except ValueError:
+            return secure(JSONResponse({"detail":"Invalid Content-Length"}, status_code=400))
+    if request.method != "OPTIONS" and os.getenv("OMNIFORENSICS_PUBLIC_MODE","false").lower() == "true" and request.url.path != "/api/health":
+        username, password = os.getenv("OMNIFORENSICS_USERNAME",""), os.getenv("OMNIFORENSICS_PASSWORD","")
+        if not username or not password:
+            return secure(JSONResponse({"detail":"Backend access is not configured"}, status_code=503))
+        user = pwd = ""
+        header = request.headers.get("authorization","")
+        if header.startswith("Basic "):
+            try:
+                user, pwd = base64.b64decode(header[6:], validate=True).decode().split(":",1)
+            except (ValueError, UnicodeDecodeError):
+                pass
+        if not (secrets.compare_digest(user,username) and secrets.compare_digest(pwd,password)):
+            return secure(Response("Authentication required",status_code=401,headers={"WWW-Authenticate":'Basic realm="OmniForensics AI", charset="UTF-8"'}))
+    return secure(await call_next(request))
 
 @app.get("/", response_class=HTMLResponse)
 def home():
     return (STATIC / "index.html").read_text(encoding="utf-8")
 
-class CaseIn(BaseModel):
-    title: str = Field(min_length=1, max_length=160)
-    description: str = Field(default="", max_length=4000)
-
-class NoteIn(BaseModel):
-    body: str = Field(min_length=1, max_length=5000)
-
-class EvidenceUpdate(BaseModel):
-    tags: str = Field(default="", max_length=1000)
-    source_description: str = Field(default="", max_length=2000)
-    collected_by: str = Field(default="", max_length=200)
-    acquired_at: str = Field(default="", max_length=100)
-
-class CustodyIn(BaseModel):
-    action: str = Field(min_length=2, max_length=100)
-    handler: str = Field(default="", max_length=200)
-    location: str = Field(default="", max_length=300)
-    details: str = Field(default="", max_length=2000)
-
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "public-authenticated" if os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true" else "local-first", "version": "0.4.0",
-            "max_upload_bytes": MAX_UPLOAD_BYTES,
-            "features": ["sha256", "signature_hints", "image_metadata", "optional_ocr",
-                         "optional_yolo_image_detection", "optional_video_sampling", "hash_linked_audit",
-                         "case_timeline", "evidence_search", "provenance_fields", "custody_log",
-                         "duplicate_hash_correlation", "json_manifest", "pdf_report"]}
+    return {"status":"ok","mode":"stateless","version":"1.0.0","persistent_case_storage":False,"max_file_bytes":MAX_FILE_BYTES,"max_files_per_request":MAX_FILES}
 
-@app.post("/api/cases")
-def create_case(data: CaseIn):
-    title = data.title.strip()
-    if not title:
-        raise HTTPException(422, "Case title cannot be blank")
-    case_id = "CASE-" + uuid.uuid4().hex[:10].upper()
-    created = now()
-    with connect() as conn:
-        conn.execute("INSERT INTO cases VALUES(?,?,?,?)", (case_id, title, data.description.strip(), created))
-    audit(case_id, "case_created", {"title": title})
-    return {"id": case_id, "title": title, "description": data.description.strip(), "created_at": created}
+class FileInput(BaseModel):
+    filename: str = Field(min_length=1, max_length=180)
+    content_base64: str = Field(min_length=1)
 
-@app.get("/api/cases")
-def list_cases(q: str = Query(default="", max_length=200)):
-    pattern = "%" + q.strip() + "%"
-    with connect() as conn:
-        rows = conn.execute("""SELECT c.*, COUNT(e.id) evidence_count FROM cases c
-          LEFT JOIN evidence e ON e.case_id=c.id
-          WHERE (?='' OR c.title LIKE ? OR c.description LIKE ? OR c.id LIKE ?)
-          GROUP BY c.id ORDER BY c.created_at DESC""",
-          (q.strip(), pattern, pattern, pattern)).fetchall()
-    return [dict(row) for row in rows]
+class SceneInput(BaseModel):
+    case_reference: str = Field(default="", max_length=160)
+    incident_date: str = Field(default="", max_length=100)
+    location: str = Field(default="", max_length=300)
+    incident_type: str = Field(default="Unspecified", max_length=120)
+    description: str = Field(default="", max_length=12000)
+    observations: str = Field(default="", max_length=12000)
+    files: list[FileInput] = Field(default_factory=list, max_length=MAX_FILES)
 
-@app.get("/api/cases/{case_id}")
-def case_detail(case_id: str):
-    case = case_or_404(case_id)
-    with connect() as conn:
-        evidence = [dict(row) for row in conn.execute(
-            "SELECT * FROM evidence WHERE case_id=? ORDER BY uploaded_at DESC", (case_id,)).fetchall()]
-        notes = [dict(row) for row in conn.execute(
-            "SELECT * FROM notes WHERE case_id=? ORDER BY id DESC", (case_id,)).fetchall()]
-    return {"case": case, "evidence": evidence, "notes": notes}
-
-@app.post("/api/cases/{case_id}/evidence")
-async def upload(case_id: str, file: UploadFile = File(...)):
-    case_or_404(case_id)
-    name = Path(file.filename or "upload.bin").name
-    name = re.sub(r"[^A-Za-z0-9._ ()-]", "_", name)[:180] or "upload.bin"
-    evidence_id = "EVD-" + uuid.uuid4().hex[:12].upper()
-    folder = EVIDENCE_DIR / case_id
-    folder.mkdir(parents=True, exist_ok=True)
-    stored = evidence_id + Path(name).suffix[:16]
-    destination = folder / stored
-    total = 0
-    evidence_recorded = False
+def analyze_file(item: FileInput):
+    name = re.sub(r"[^A-Za-z0-9._ ()-]", "_", Path(item.filename).name)[:180] or "uploaded-file"
     try:
-        with destination.open("xb") as output:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "Upload exceeds configured size limit")
-                output.write(chunk)
-        if total == 0:
-            raise HTTPException(400, "Empty files are not accepted")
-        analysis = inspect_file(destination, name)
-        created = now()
-        with connect() as conn:
-            conn.execute("""INSERT INTO evidence
-                (id,case_id,original_name,stored_name,sha256,size_bytes,detected_mime,uploaded_at,analysis_json,
-                 tags,source_description,collected_by,acquired_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (evidence_id, case_id, name, stored, analysis["sha256"], total,
-                 analysis["mime_type"], created, json.dumps(analysis, ensure_ascii=False), "", "", "", ""))
-        evidence_recorded = True
-        audit(case_id, "evidence_uploaded", {"evidence_id": evidence_id, "sha256": analysis["sha256"],
-                                             "size_bytes": total, "mime_type": analysis["mime_type"]})
-        return {"id": evidence_id, "case_id": case_id, "original_name": name, "sha256": analysis["sha256"],
-                "size_bytes": total, "mime_type": analysis["mime_type"], "uploaded_at": created, "analysis": analysis}
+        raw = base64.b64decode(item.content_base64, validate=True)
     except Exception:
-        if not evidence_recorded and destination.exists():
-            destination.unlink()
-        raise
-    finally:
-        await file.close()
-
-@app.get("/api/evidence/search")
-def search_evidence(q: str = Query(default="", max_length=200), tag: str = Query(default="", max_length=100),
-                    case_id: str = Query(default="", max_length=64), limit: int = Query(default=100, ge=1, le=500)):
-    qv, tv, cv = q.strip(), tag.strip(), case_id.strip()
-    pat = "%" + qv + "%"
-    tagpat = "%" + tv + "%"
-    with connect() as conn:
-        rows = conn.execute("""SELECT e.id,e.case_id,e.original_name,e.sha256,e.size_bytes,e.detected_mime,
-             e.uploaded_at,e.tags,e.source_description,e.collected_by,e.acquired_at
-             FROM evidence e WHERE (?='' OR e.case_id=?) AND
-             (?='' OR e.original_name LIKE ? OR e.sha256 LIKE ? OR e.detected_mime LIKE ? OR
-              e.source_description LIKE ? OR e.collected_by LIKE ?) AND
-             (?='' OR (',' || lower(e.tags) || ',') LIKE lower(?))
-             ORDER BY e.uploaded_at DESC LIMIT ?""",
-             (cv, cv, qv, pat, pat, pat, pat, pat, tv, "%," + tv + ",%", limit)).fetchall()
-    return [dict(row) for row in rows]
-
-@app.get("/api/evidence/{evidence_id}")
-def evidence_detail(evidence_id: str):
-    result = evidence_or_404(evidence_id)
-    result["analysis"] = json.loads(result.pop("analysis_json"))
+        raise HTTPException(422, "Invalid base64 file data")
+    if not raw:
+        raise HTTPException(422, name + " is empty")
+    if len(raw) > MAX_FILE_BYTES:
+        raise HTTPException(413, name + " exceeds the per-file size limit")
+    digest = hashlib.sha256(raw).hexdigest()
+    markers = [(b"\x89PNG\r\n\x1a\n","PNG image"),(b"\xff\xd8\xff","JPEG image"),(b"GIF87a","GIF image"),(b"GIF89a","GIF image"),(b"%PDF-","PDF document"),(b"PK\x03\x04","ZIP-based file"),(b"\x7fELF","ELF executable"),(b"MZ","Windows executable"),(b"OggS","Ogg media"),(b"RIFF","RIFF container")]
+    result = {"filename":name,"size_bytes":len(raw),"sha256":digest,"signature_hint":next((label for mark,label in markers if raw.startswith(mark)),"Unknown / unrecognized signature")}
+    if raw.startswith((b"\x89PNG\r\n\x1a\n",b"\xff\xd8\xff",b"GIF87a",b"GIF89a",b"BM")):
+        try:
+            with Image.open(io.BytesIO(raw)) as im:
+                result["image"]={"format":im.format,"width":im.width,"height":im.height,"mode":im.mode}
+                exif={}
+                for key,val in im.getexif().items():
+                    label=ExifTags.TAGS.get(key,str(key))
+                    if isinstance(val,(str,int,float,bool)): exif[label]=val
+                    if len(exif)>=25: break
+                if exif: result["image"]["exif"]=exif
+        except Exception:
+            result["image_parse_note"]="Image-like bytes could not be parsed."
+    if raw.startswith(b"%PDF-") or Path(name).suffix.lower()==".pdf":
+        try:
+            pdf=PdfReader(io.BytesIO(raw),strict=False)
+            meta=pdf.metadata or {}
+            result["pdf"]={"page_count":len(pdf.pages),"metadata":{str(k).lstrip("/"):str(v)[:400] for k,v in meta.items() if v is not None and str(k).lstrip("/") in {"Title","Author","Creator","Producer","CreationDate","ModDate"}}}
+        except Exception:
+            result["pdf_parse_note"]="PDF metadata could not be parsed."
+    result["limitation"]="Metadata/signature hints do not establish authenticity, origin, identity, timeline, or criminal activity."
     return result
 
-@app.patch("/api/evidence/{evidence_id}")
-def update_evidence(evidence_id: str, data: EvidenceUpdate):
-    item = evidence_or_404(evidence_id)
-    values = {"tags": ",".join(dict.fromkeys(t.strip() for t in data.tags.split(",") if t.strip())),
-              "source_description": data.source_description.strip(),
-              "collected_by": data.collected_by.strip(), "acquired_at": data.acquired_at.strip()}
-    with connect() as conn:
-        conn.execute("""UPDATE evidence SET tags=?,source_description=?,collected_by=?,acquired_at=? WHERE id=?""",
-                     (values["tags"], values["source_description"], values["collected_by"], values["acquired_at"], evidence_id))
-    audit(item["case_id"], "evidence_provenance_updated", {"evidence_id": evidence_id, **values})
-    return {"evidence_id": evidence_id, **values}
+def build_analysis(data: SceneInput):
+    if len(data.files)>MAX_FILES: raise HTTPException(413,"Too many files")
+    files=[analyze_file(item) for item in data.files]
+    checks=[]
+    if not data.description.strip(): checks.append("Incident description was not supplied.")
+    if not data.observations.strip(): checks.append("No investigator observations were supplied.")
+    if not data.incident_date.strip(): checks.append("Incident date/time is unspecified; verify against a trusted source.")
+    if not data.location.strip(): checks.append("Scene location is unspecified.")
+    if not files: checks.append("No files were submitted for metadata and hash review.")
+    seen={}
+    for item in files: seen.setdefault(item["sha256"],[]).append(item["filename"])
+    for names in seen.values():
+        if len(names)>1: checks.append("Identical file bytes detected among submitted files: "+", ".join(names))
+    unknown=[f["filename"] for f in files if f["signature_hint"].startswith("Unknown")]
+    if unknown: checks.append("No recognized leading-byte signature detected for: "+", ".join(unknown))
+    return {"product":"OmniForensics AI — Stateless Crime Scene Analysis","generated_at_utc":datetime.now(timezone.utc).isoformat(),"case_reference":data.case_reference.strip(),"incident_date":data.incident_date.strip(),"location":data.location.strip(),"incident_type":data.incident_type.strip(),"description":data.description.strip(),"investigator_observations":[x.strip(" •\t-") for x in data.observations.splitlines() if x.strip()],"automated_checks_and_followups":checks,"files":files,"file_count":len(files),"privacy":{"persistent_case_storage":False,"files_written_by_application":False,"database_used":False,"retention":"Request processing only; response returned to client."},"scope_note":"Educational triage only. This report does not determine that a crime occurred, identify suspects, establish cause of death, reconstruct events, or prove guilt. Human investigators must independently verify findings."}
 
-@app.post("/api/evidence/{evidence_id}/custody")
-def add_custody(evidence_id: str, data: CustodyIn):
-    item = evidence_or_404(evidence_id)
-    created = now()
-    event_hash = audit(item["case_id"], "custody_event", {"evidence_id": evidence_id, "action": data.action.strip(),
-                       "handler": data.handler.strip(), "location": data.location.strip(), "details": data.details.strip()})
-    with connect() as conn:
-        cursor = conn.execute("""INSERT INTO custody(evidence_id,action,handler,location,details,created_at,audit_event_hash)
-          VALUES(?,?,?,?,?,?,?)""", (evidence_id, data.action.strip(), data.handler.strip(), data.location.strip(),
-          data.details.strip(), created, event_hash))
-        record_id = cursor.lastrowid
-    return {"id": record_id, "evidence_id": evidence_id, "action": data.action.strip(), "created_at": created,
-            "audit_event_hash": event_hash}
+@app.post("/api/analyze")
+def analyze(data: SceneInput):
+    return build_analysis(data)
 
-@app.get("/api/evidence/{evidence_id}/custody")
-def custody_list(evidence_id: str):
-    evidence_or_404(evidence_id)
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM custody WHERE evidence_id=? ORDER BY id", (evidence_id,)).fetchall()
-    return [dict(row) for row in rows]
-
-@app.get("/api/evidence/{evidence_id}/integrity")
-def verify(evidence_id: str):
-    item = evidence_or_404(evidence_id)
-    path = EVIDENCE_DIR / item["case_id"] / item["stored_name"]
-    if not path.exists():
-        result = {"evidence_id": evidence_id, "status": "missing", "expected_sha256": item["sha256"], "actual_sha256": None}
-    else:
-        actual = sha256_file(path)
-        result = {"evidence_id": evidence_id, "status": "match" if actual == item["sha256"] else "mismatch",
-                  "expected_sha256": item["sha256"], "actual_sha256": actual}
-    audit(item["case_id"], "integrity_check", {"evidence_id": evidence_id, "status": result["status"]})
-    return result
-
-@app.post("/api/cases/{case_id}/notes")
-def add_note(case_id: str, data: NoteIn):
-    case_or_404(case_id)
-    body = data.body.strip()
-    if not body:
-        raise HTTPException(422, "Note cannot be blank")
-    created = now()
-    with connect() as conn:
-        cursor = conn.execute("INSERT INTO notes(case_id,body,created_at) VALUES(?,?,?)", (case_id, body, created))
-        note_id = cursor.lastrowid
-    audit(case_id, "note_added", {"note_id": note_id})
-    return {"id": note_id, "case_id": case_id, "body": body, "created_at": created}
-
-@app.get("/api/cases/{case_id}/audit")
-def audit_list(case_id: str):
-    case_or_404(case_id)
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()
-    return [dict(row) for row in rows]
-
-@app.get("/api/cases/{case_id}/audit/integrity")
-def audit_integrity(case_id: str):
-    case_or_404(case_id)
-    with connect() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM audit ORDER BY id").fetchall()]
-    previous = "GENESIS"
-    checked = 0
-    legacy = 0
-    for row in rows:
-        if not row.get("event_hash"):
-            legacy += 1
-            continue
-        payload = json.dumps({"case_id": row["case_id"], "event": row["event"],
-                              "details_json": row["details_json"], "created_at": row["created_at"],
-                              "prev_hash": previous}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        if row.get("prev_hash") != previous or row.get("event_hash") != expected:
-            return {"status": "tampered_or_invalid", "checked_events": checked, "legacy_events": legacy,
-                    "failed_event_id": row["id"],
-                    "note": "Unhashed legacy events are excluded; the hash-linked portion can still be checked."}
-        previous = row["event_hash"]
-        checked += 1
-    return {"status": "verified_with_legacy" if legacy else "verified",
-            "checked_events": checked, "legacy_events": legacy,
-            "note": "Hash-linked tamper evidence only; legacy events are not verified and database administrators can rewrite the entire chain."}
-
-@app.get("/api/cases/{case_id}/timeline")
-def timeline(case_id: str):
-    case_or_404(case_id)
-    with connect() as conn:
-        evidence = conn.execute("SELECT id AS ref_id, original_name AS label, uploaded_at AS timestamp FROM evidence WHERE case_id=?", (case_id,)).fetchall()
-        notes = conn.execute("SELECT id AS ref_id, substr(body,1,180) AS label, created_at AS timestamp FROM notes WHERE case_id=?", (case_id,)).fetchall()
-        events = conn.execute("SELECT id AS ref_id, event AS label, created_at AS timestamp FROM audit WHERE case_id=?", (case_id,)).fetchall()
-    items = ([{"type": "evidence", **dict(row)} for row in evidence] +
-             [{"type": "note", **dict(row)} for row in notes] +
-             [{"type": "audit", **dict(row)} for row in events])
-    return sorted(items, key=lambda item: item["timestamp"])
-
-@app.get("/api/cases/{case_id}/correlations")
-def correlations(case_id: str):
-    case_or_404(case_id)
-    with connect() as conn:
-        evidence = [dict(r) for r in conn.execute(
-            "SELECT id,case_id,original_name,sha256,size_bytes,detected_mime,uploaded_at,tags FROM evidence WHERE case_id=? ORDER BY uploaded_at",
-            (case_id,)).fetchall()]
-    groups = {}
-    for item in evidence:
-        groups.setdefault(item["sha256"], []).append(item)
-    duplicate_hashes = [{"sha256": digest, "items": items} for digest, items in groups.items() if len(items) > 1]
-    return {"case_id": case_id, "evidence_count": len(evidence), "duplicate_hash_groups": duplicate_hashes,
-            "same_name_groups": [{"name": name, "evidence_ids": [x["id"] for x in items]}
-              for name, items in _group(evidence, "original_name").items() if len(items) > 1],
-            "note": "These are deterministic metadata/hash correlations only; matching names do not prove a shared source."}
-
-def _group(items, key):
-    grouped = {}
-    for item in items:
-        grouped.setdefault(item[key], []).append(item)
-    return grouped
-
-@app.get("/api/cases/{case_id}/manifest.json")
-def manifest(case_id: str):
-    case = case_or_404(case_id)
-    with connect() as conn:
-        evidence = [dict(r) for r in conn.execute("SELECT * FROM evidence WHERE case_id=? ORDER BY uploaded_at", (case_id,)).fetchall()]
-        notes = [dict(r) for r in conn.execute("SELECT * FROM notes WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
-        events = [dict(r) for r in conn.execute("SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
-    items = []
-    for e in evidence:
-        items.append({"evidence_id": e["id"], "original_name": e["original_name"], "sha256_at_intake": e["sha256"],
-                      "size_bytes": e["size_bytes"], "detected_mime_hint": e["detected_mime"],
-                      "uploaded_at": e["uploaded_at"], "tags": e["tags"], "source_description": e["source_description"],
-                      "collected_by": e["collected_by"], "acquired_at": e["acquired_at"],
-                      "custody": custody_for_manifest(e["id"]), "analysis": json.loads(e["analysis_json"])})
-    document = {"schema_version": "1.0", "generated_at": now(), "case": case, "evidence": items,
-                "notes": notes, "audit_events": events,
-                "limitations": ["Manifest is not digitally signed.", "Hashes prove byte equality only against recorded values.",
-                                "Audit chain is stored in the same mutable local database."]}
-    audit(case_id, "manifest_generated", {"evidence_count": len(items)})
-    return JSONResponse(document, headers={"Content-Disposition": f'attachment; filename="{case_id}-manifest.json"'})
-
-def custody_for_manifest(evidence_id):
-    with connect() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM custody WHERE evidence_id=? ORDER BY id", (evidence_id,)).fetchall()]
-
-@app.get("/api/cases/{case_id}/report")
-def report(case_id: str):
-    case = case_or_404(case_id)
-    with connect() as conn:
-        evidence = [dict(row) for row in conn.execute(
-            "SELECT * FROM evidence WHERE case_id=? ORDER BY uploaded_at", (case_id,)).fetchall()]
-        notes = [dict(row) for row in conn.execute(
-            "SELECT * FROM notes WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
-        audit_events = [dict(row) for row in conn.execute(
-            "SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
-        for item in evidence:
-            item["custody_events"] = [dict(row) for row in conn.execute(
-                "SELECT * FROM custody WHERE evidence_id=? ORDER BY id", (item["id"],)).fetchall()]
-    path = REPORT_DIR / (case_id + ".pdf")
-    build_report(path, case, evidence, notes, audit_events)
-    audit(case_id, "report_generated", {"filename": path.name})
-    return FileResponse(path, media_type="application/pdf", filename=case_id + "-forensic-report.pdf")
+@app.post("/api/report/pdf")
+def pdf_report(data: SceneInput):
+    report=build_analysis(data)
+    buffer=io.BytesIO()
+    doc=SimpleDocTemplate(buffer,pagesize=letter,rightMargin=0.65*inch,leftMargin=0.65*inch,topMargin=0.6*inch,bottomMargin=0.6*inch,title="OmniForensics AI Analysis Report")
+    styles=getSampleStyleSheet()
+    story=[Paragraph("OmniForensics AI",styles["Title"]),Paragraph("Crime Scene Analysis & Triage Report",styles["Heading1"]),Paragraph("Generated UTC: "+escape(report["generated_at_utc"]),styles["Normal"]),Spacer(1,10)]
+    for label,key in [("Case reference","case_reference"),("Incident date/time","incident_date"),("Location","location"),("Incident type","incident_type"),("Description","description")]:
+        story.extend([Paragraph(escape(label),styles["Heading3"]),Paragraph(escape(report[key] or "Not supplied").replace("\n","<br/>"),styles["BodyText"])])
+    story.append(Paragraph("Investigator observations",styles["Heading2"]))
+    for item in report["investigator_observations"] or ["No observations supplied."]: story.append(Paragraph("• "+escape(item),styles["BodyText"]))
+    story.append(Paragraph("File triage and SHA-256",styles["Heading2"]))
+    for item in report["files"]:
+        story.extend([Paragraph(escape(item["filename"]),styles["Heading3"]),Paragraph("SHA-256: "+item["sha256"],styles["Code"]),Paragraph("Size: "+str(item["size_bytes"])+" bytes · Signature hint: "+escape(item["signature_hint"]),styles["BodyText"])])
+        if item.get("image"):
+            im=item["image"]; story.append(Paragraph("Image: "+escape(str(im["format"]))+" · "+str(im["width"])+" × "+str(im["height"]),styles["BodyText"]))
+            if im.get("exif"): story.append(Preformatted(json.dumps(im["exif"],indent=2,ensure_ascii=False)[:2000],styles["Code"]))
+        if item.get("pdf"):
+            story.append(Paragraph("PDF page count: "+str(item["pdf"]["page_count"]),styles["BodyText"]))
+            if item["pdf"].get("metadata"): story.append(Preformatted(json.dumps(item["pdf"]["metadata"],indent=2,ensure_ascii=False)[:2000],styles["Code"]))
+    if not report["files"]: story.append(Paragraph("No files submitted.",styles["BodyText"]))
+    story.append(Paragraph("Checks and follow-up items",styles["Heading2"]))
+    for item in report["automated_checks_and_followups"] or ["No automated flags generated. This does not prove no issues exist."]: story.append(Paragraph("• "+escape(item),styles["BodyText"]))
+    story.extend([Spacer(1,10),Paragraph("Scope and data handling",styles["Heading2"]),Paragraph(escape(report["scope_note"]),styles["BodyText"]),Paragraph("The application does not intentionally save requests, uploads, cases, or reports to backend storage. Hosting infrastructure may still collect operational metadata/logs; the browser and downloaded report may retain a copy. Review host privacy terms before submitting sensitive data.",styles["BodyText"])])
+    doc.build(story)
+    pdf=buffer.getvalue()
+    buffer.close()
+    return Response(pdf,media_type="application/pdf",headers={"Content-Disposition":'attachment; filename="omniforensics-analysis-report.pdf"',"Cache-Control":"no-store, max-age=0"})
