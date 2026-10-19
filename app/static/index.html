@@ -1,11 +1,40 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OmniForensics AI — Scene Analysis</title>
-<link rel="stylesheet" href="static/styles.css"><style>
-body{background:#0b1020;color:#e9eef8;font-family:system-ui,sans-serif;margin:0}header{padding:18px max(18px,calc((100% - 1080px)/2));display:flex;justify-content:space-between;background:#10182a;border-bottom:1px solid #35425e}.brand small{display:block;color:#a9b6cc}main{max-width:1080px;margin:25px auto;padding:0 18px}.hero,.panel{padding:24px;margin-bottom:20px;border:1px solid #35425e;border-radius:16px;background:#10182a}.hero{display:grid;grid-template-columns:2fr 1fr;gap:20px}h1{font-size:clamp(30px,5vw,48px)}h1 em{color:#8ed6c2}label{display:block;margin:15px 0}input,textarea,select{display:block;width:100%;box-sizing:border-box;padding:12px;margin-top:7px;background:#0b1020;color:#fff;border:1px solid #35425e;border-radius:8px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}.wide{grid-column:1/-1}button{padding:12px 16px;margin:6px 6px 6px 0;background:#8ed6c2;color:#09211e;border:0;border-radius:8px;font-weight:700}.secondary{background:#35425e;color:white}.notice{padding:15px;background:#282235;border-left:3px solid #e5b86c}.evidence{border:1px solid #35425e;padding:12px;margin:10px 0;overflow-wrap:anywhere}.hash{overflow-wrap:anywhere;color:#8ed6c2}#report[hidden]{display:none}#toast{padding:10px;color:#8ed6c2}@media(max-width:650px){.hero,.grid{grid-template-columns:1fr}.wide{grid-column:auto}header{padding:14px}.panel,.hero{padding:16px}}
-</style></head><body><header><div class="brand"><b>OF</b> <strong>OmniForensics AI</strong><small>Crime Scene Analysis & Report Generator</small></div><span id="backendStatus">Checking backend…</span></header>
-<main><section class="hero"><div><small>STATELESS INVESTIGATIVE TRIAGE</small><h1>Review scene details.<br><em>Generate a report.</em></h1><p>Submit incident information and optional files for basic metadata and SHA-256 checks. No database or saved case history.</p></div><aside><b>Privacy design</b><p>Application processes request data in memory and does not intentionally save files to backend storage.</p></aside></section>
-<form id="analysisForm" class="panel"><h2>Incident details</h2><div class="grid">
-<label>Case reference<input id="caseRef" maxlength="160"></label><label>Incident date/time<input id="incidentDate" maxlength="100"></label><label>Scene location<input id="sceneLocation" maxlength="300"></label><label>Incident type<select id="incidentType"><option>Unspecified</option><option>Property incident</option><option>Suspicious activity</option><option>Traffic incident</option><option>Digital evidence review</option><option>Other / under review</option></select></label>
-<label class="wide">Incident description<textarea id="sceneDescription" rows="4" maxlength="12000" placeholder="Separate reported information from verified facts."></textarea></label><label class="wide">Investigator observations<textarea id="observations" rows="5" maxlength="12000" placeholder="One observation per line."></textarea></label>
-<label class="wide">Optional files (up to 5, each up to 4 MB)<input id="sceneFiles" type="file" multiple><small>Basic signature checks, image metadata, PDF metadata and SHA-256 only.</small></label></div><button id="analyzeBtn">Analyze scene & generate report</button><button id="clearForm" type="button" class="secondary">Clear form</button></form>
-<section id="report" class="panel" hidden><h2>Analysis report</h2><div id="summary"></div><button id="downloadPdf" type="button">Download PDF report</button><button id="downloadJson" type="button" class="secondary">Download JSON report</button></section>
-<div class="notice"><b>Important:</b> Educational triage only, not a certified forensic system. It does not identify suspects, determine guilt, reconstruct events, or prove a crime occurred. Verify all findings independently. Hosting logs, browser state, and downloaded reports may retain information; do not submit sensitive evidence to a public demo.</div><footer>OmniForensics AI · Stateless prototype</footer></main><div id="toast" role="status"></div><script src="config.js"></script><script src="static/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a111b">
+<meta name="description" content="Browser-only scene triage, file hashing and report generation. Files stay in your browser.">
+<title>OmniForensics AI — Private Scene Triage</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+#backendStatus{font-size:12px;color:var(--mint);border:1px solid #27645c;border-radius:30px;padding:7px 10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}.wide{grid-column:1/-1}
+select{display:block;width:100%;margin-top:6px;padding:11px;background:#091521;color:var(--txt);border:1px solid #2a3d52;border-radius:9px;font:inherit}
+#report[hidden]{display:none}.report-actions{display:flex;gap:8px;flex-wrap:wrap}
+button:disabled{opacity:.6;cursor:wait}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+</style>
+</head>
+<body>
+<header><div class="brand"><b>OF</b><div><strong>OmniForensics AI</strong><small>Browser-only scene triage & report generator</small></div></div><span id="backendStatus">Local processing only</span></header>
+<main>
+<section class="hero"><div><small>PRIVATE BY DESIGN · NO BACKEND</small><h1>Review scene details.<br><em>Build a clear report.</em></h1><p>Analyze selected files directly in this browser, calculate SHA-256 hashes, inspect basic file signatures and create PDF/JSON reports. No file or form data is sent to an analysis server.</p></div><aside><b>Local processing</b><p>Files are read by your browser for analysis. This app does not upload them, create an account, or keep case history.</p><p class="muted">For supported browsers, use the HTTPS GitHub Pages site.</p></aside></section>
+<div class="stats"><div><strong>0</strong> backend services</div><div><strong>SHA-256</strong> file integrity hash</div><div><strong>5 files</strong> per analysis</div><div><strong>4 MiB</strong> maximum per file</div></div>
+<form id="analysisForm" class="panel">
+<h2>Incident details</h2><div class="grid">
+<label>Case reference<input id="caseRef" maxlength="160" placeholder="e.g. DEMO-001"></label>
+<label>Incident date/time<input id="incidentDate" maxlength="100" placeholder="Date/time or unknown"></label>
+<label>Scene location<input id="sceneLocation" maxlength="300" placeholder="Location or not supplied"></label>
+<label>Incident type<select id="incidentType"><option>Unspecified</option><option>Property incident</option><option>Suspicious activity</option><option>Traffic incident</option><option>Digital evidence review</option><option>Other / under review</option></select></label>
+<label class="wide">Incident description<textarea id="sceneDescription" rows="4" maxlength="12000" placeholder="Separate reported information from verified facts."></textarea></label>
+<label class="wide">Investigator observations<textarea id="observations" rows="5" maxlength="12000" placeholder="One observation per line. Avoid unsupported conclusions."></textarea></label>
+<label class="wide">Optional files (up to 5; each up to 4 MiB)<input id="sceneFiles" type="file" multiple><small class="muted">Basic signature hints, SHA-256, image dimensions and simple PDF metadata checks. Files remain in this browser.</small></label>
+</div><button id="analyzeBtn" type="submit">Analyze locally & generate report</button><button id="clearForm" type="button" class="secondary">Clear form</button><p id="toast" role="status" aria-live="polite"></p>
+</form>
+<section id="report" class="panel" hidden><h2>Analysis report</h2><div id="summary"></div><div class="report-actions"><button id="downloadPdf" type="button">Download PDF report</button><button id="downloadJson" type="button" class="secondary">Download JSON report</button></div></section>
+<div class="notice"><b>Scope & privacy:</b> Educational triage only, not a certified forensic system. This tool does not identify suspects, determine guilt, reconstruct events, or prove a crime occurred. Hashes identify the bytes processed, not provenance or chain of custody. Analysis happens in your browser, but your browser, extensions, device, network, or downloaded files may retain data independently. Do not use public/demo devices or submit sensitive evidence unless authorized.</div>
+<footer>OmniForensics AI · GitHub Pages edition · No backend or case database</footer>
+</main>
+<script src="app.js" defer></script>
+</body></html>
