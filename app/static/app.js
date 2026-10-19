@@ -50,9 +50,8 @@ async function inspectFile(file) {
   return result;
 }
 function extractPdfText(text, pattern) { const match = text.match(pattern); return match ? match[1].replace(/\\([()\\])/g,"$1") : ""; }
-function buildReport() {
+function buildReport(files = []) {
   const observations = $("observations").value.split(/\r?\n/).map(x=>x.trim().replace(/^[•\-\t ]+/,"")).filter(Boolean);
-  const files = reportData?.files || [];
   const checks = [];
   if (!$("sceneDescription").value.trim()) checks.push("Incident description was not supplied.");
   if (!observations.length) checks.push("No investigator observations were supplied.");
@@ -126,10 +125,7 @@ $("analysisForm").addEventListener("submit", async event => {
     const selected=Array.from($("sceneFiles").files);
     if (selected.length>MAX_FILES) throw new Error("Select no more than 5 files.");
     const files=[]; for (const file of selected) files.push(await inspectFile(file));
-    reportData=buildReport(); reportData.files=files; reportData.file_count=files.length;
-    const hashes=new Map(); for (const f of files) { if(!hashes.has(f.sha256))hashes.set(f.sha256,[]);hashes.get(f.sha256).push(f.filename); }
-    for(const names of hashes.values())if(names.length>1)reportData.automated_checks_and_followups.push("Identical file bytes detected among submitted files: "+names.join(", "));
-    for(const f of files)if(f.signature_hint.startsWith("Unknown"))reportData.automated_checks_and_followups.push("No recognized leading-byte signature detected for: "+f.filename);
+    reportData=buildReport(files);
     renderReport(reportData); toast("Analysis complete. Nothing was uploaded to an analysis server."); $("report").scrollIntoView({behavior:"smooth",block:"start"});
   } catch(error) { toast(error.message || "Analysis failed."); }
   finally { button.disabled=false; }
