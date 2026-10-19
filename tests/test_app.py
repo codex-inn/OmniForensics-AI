@@ -121,3 +121,19 @@ def test_email_header_and_archive_triage(tmp_path, monkeypatch):
         triage = zipped.json()["analysis"]["archive"]
         assert triage["status"] == "listed"
         assert triage["entries_preview"][0]["name"] == "sample.txt"
+
+def test_public_mode_requires_credentials(tmp_path, monkeypatch):
+    import base64
+    monkeypatch.setenv("OMNIFORENSICS_PUBLIC_MODE", "true")
+    monkeypatch.setenv("OMNIFORENSICS_USERNAME", "investigator")
+    monkeypatch.setenv("OMNIFORENSICS_PASSWORD", "test-only-secret")
+    with setup_client(tmp_path, monkeypatch) as client:
+        assert client.get("/api/health").status_code == 200
+        denied = client.get("/")
+        assert denied.status_code == 401
+        assert "WWW-Authenticate" in denied.headers
+        token = base64.b64encode(b"investigator:test-only-secret").decode("ascii")
+        allowed = client.get("/", headers={"Authorization": "Basic " + token})
+        assert allowed.status_code == 200
+        assert client.get("/api/cases").status_code == 401
+        assert client.get("/api/cases", headers={"Authorization": "Basic " + token}).status_code == 200
