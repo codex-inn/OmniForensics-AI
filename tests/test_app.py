@@ -12,6 +12,10 @@ def setup_client(tmp_path, monkeypatch):
     config.REPORT_DIR = config.DATA_DIR / "reports"
     config.DB_PATH = config.DATA_DIR / "test.sqlite"
     from app.main import app
+    import app.main as main_module
+    main_module.EVIDENCE_DIR = config.EVIDENCE_DIR
+    main_module.REPORT_DIR = config.REPORT_DIR
+    main_module.MAX_UPLOAD_BYTES = config.MAX_UPLOAD_BYTES
     return TestClient(app)
 
 def test_case_upload_hash_timeline_audit_and_report(tmp_path, monkeypatch):
