@@ -12,7 +12,7 @@ An educational prototype for authorized evidence intake, review and reporting. E
 - On-demand evidence integrity check (match, mismatch, missing).
 - Conservative byte-signature hints for common images, PDF, ZIP, some audio/video, PCAP and executable formats. Not a full parser or malware scanner.
 - Image format, dimensions, color mode and available EXIF metadata.
-- Optional OCR using Tesseract + pytesseract.
+- Optional OCR using Tesseract + pytesseract. PDF metadata uses pypdf.
 - Optional YOLO object detection on images when a local model path is configured.
 - Optional OpenCV video metadata and bounded sampling of up to 12 evenly spaced frames; if YOLO is configured, sampled frames can be analyzed with timestamped detections.
 - Unified chronological timeline of evidence, notes and audit events.
@@ -24,7 +24,7 @@ An educational prototype for authorized evidence intake, review and reporting. E
 ## Not implemented / not certified
 
 - Full-frame CCTV analysis, continuous object tracking, reliable camera/object counting across time, audio transcription, facial recognition or identity matching.
-- Full disk/mobile acquisition, email parsing, advanced document malware analysis, full PCAP protocol analysis or automated semantic cross-evidence correlation.
+- Full disk/mobile acquisition, full email body/attachment analysis, advanced document malware analysis, full PCAP protocol/stream analysis or automated semantic cross-evidence correlation.
 - Certified forensic acquisition, external timestamping, digitally signed/immutable audit logs, application-level encryption, user authentication, role-based access or production multi-user deployment.
 - Attribution of a person, proof of a crime, or reliable location inference from an image.
 
