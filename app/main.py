@@ -183,18 +183,25 @@ def audit_integrity(case_id: str):
         rows = [dict(row) for row in conn.execute("SELECT * FROM audit ORDER BY id").fetchall()]
     previous = "GENESIS"
     checked = 0
+    legacy = 0
     for row in rows:
+        if not row.get("event_hash"):
+            # Pre-upgrade audit rows have no verifiable chain hash; do not pretend to verify them.
+            legacy += 1
+            continue
         payload = json.dumps({"case_id": row["case_id"], "event": row["event"],
                               "details_json": row["details_json"], "created_at": row["created_at"],
                               "prev_hash": previous}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         if row.get("prev_hash") != previous or row.get("event_hash") != expected:
-            return {"status": "tampered_or_legacy", "checked_events": checked, "failed_event_id": row["id"],
-                    "note": "Older audit rows created before hash chaining are not retroactively signed."}
+            return {"status": "tampered_or_invalid", "checked_events": checked, "legacy_events": legacy,
+                    "failed_event_id": row["id"],
+                    "note": "Unhashed legacy events are excluded; the hash-linked portion can still be checked."}
         previous = row["event_hash"]
         checked += 1
-    return {"status": "verified", "checked_events": checked,
-            "note": "Hash-linked tamper evidence only; database administrators can rewrite the entire chain."}
+    return {"status": "verified_with_legacy" if legacy else "verified",
+            "checked_events": checked, "legacy_events": legacy,
+            "note": "Hash-linked tamper evidence only; legacy events are not verified and database administrators can rewrite the entire chain."}
 
 @app.get("/api/cases/{case_id}/timeline")
 def timeline(case_id: str):
