@@ -1,7 +1,9 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
 DATA_DIR = Path(os.getenv("OMNIFORENSICS_DATA_DIR", str(ROOT / "data"))).resolve()
 EVIDENCE_DIR = DATA_DIR / "evidence"
 REPORT_DIR = DATA_DIR / "reports"
