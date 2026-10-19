@@ -1,12 +1,70 @@
-let selected=null;const $=x=>document.getElementById(x);const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));function toast(s){let t=$("toast");t.textContent=s;t.style.display="block";setTimeout(()=>t.style.display="none",3500)}async function req(url,opt={}){let r=await fetch(url,opt);if(!r.ok){let d={};try{d=await r.json()}catch{}throw Error(d.detail||`Request failed ${r.status}`)}return r}
-async function refresh(){let cs=await(await req("/api/cases")).json();$("caseCount").textContent=cs.length;$("evidenceCount").textContent=cs.reduce((a,c)=>a+c.evidence_count,0);$("cases").innerHTML=cs.length?cs.map(c=>`<button class="case ${selected===c.id?"active":""}" data-id="${esc(c.id)}"><b>${esc(c.title)}</b><small>${esc(c.id)} · ${c.evidence_count} evidence file(s)</small></button>`).join(""):'<p class="muted">No cases yet. Create an investigation.</p>';document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>openCase(b.dataset.id))}
-$("refresh").onclick=()=>refresh().catch(e=>toast(e.message));$("caseForm").onsubmit=async e=>{e.preventDefault();try{let r=await req("/api/cases",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:$("title").value,description:$("description").value})});let c=await r.json();selected=c.id;$("title").value="";$("description").value="";await refresh();await openCase(c.id);toast("Case created")}catch(e){toast(e.message)}};
-function evCard(e){let a={};try{a=JSON.parse(e.analysis_json)}catch{}let image=a.image?`${a.image.width} × ${a.image.height} · ${a.image.format}`:a.video?`${a.video.width||"?"} × ${a.video.height||"?"} · ${a.video.duration_seconds??"?"} sec · ${a.video.sampled_frames||0} sampled frames`:"No recognized image/video metadata";return `<div class="evidence"><h3>${esc(e.original_name)}</h3><span class="tag">${esc(e.id)}</span><span class="tag">${esc(e.detected_mime)}</span><p class="meta">${esc(image)} · ${Number(e.size_bytes).toLocaleString()} bytes</p><div class="hash">SHA-256: ${esc(e.sha256)}</div><div class="actions"><button class="secondary" data-verify="${esc(e.id)}">Verify integrity</button><button class="secondary" data-analysis="${esc(e.id)}">View analysis</button></div></div>`}
-async function openCase(id){selected=id;await refresh();let d=await(await req(`/api/cases/${encodeURIComponent(id)}`)).json(),c=d.case;$("detail").innerHTML=`<h2>${esc(c.title)}</h2><p class="meta">${esc(c.id)} · ${esc(c.created_at)}<br>${esc(c.description||"No description")}</p><div class="upload"><b>Upload evidence</b><p class="muted">Images, videos, documents, logs and other files can be stored. This prototype analyzes basic file information and images; specialized modules vary.</p><form id="upload"><input type="file" id="file" required><button style="margin-top:10px">Upload & inspect</button></form></div><h2>Evidence inventory (${d.evidence.length}) <a href="/api/cases/${encodeURIComponent(id)}/report" target="_blank" style="font-size:11px;color:var(--mint)">Generate PDF report</a></h2>${d.evidence.map(evCard).join("")||'<p class="muted">No evidence uploaded.</p>'}<hr><h2>Investigator notes</h2><form id="note"><input id="noteBody" required maxlength="5000" placeholder="Record a factual observation or follow-up task"><button style="margin-top:8px">Add note</button></form>${d.notes.map(n=>`<div class="evidence"><p>${esc(n.body)}</p><small class="meta">${esc(n.created_at)}</small></div>`).join("")||'<p class="muted">No notes recorded.</p>'}<hr><h2>Audit events</h2><div class="actions"><button id="audit" class="secondary">View audit log</button><button id="auditVerify" class="secondary">Verify audit chain</button><button id="timelineBtn" class="secondary">View timeline</button></div><pre id="auditText" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px"></pre>`;
-$("upload").onsubmit=async e=>{e.preventDefault();let f=$("file").files[0];let fd=new FormData();fd.append("file",f);try{let x=await(await req(`/api/cases/${encodeURIComponent(id)}/evidence`,{method:"POST",body:fd})).json();toast("Uploaded. SHA-256 "+x.sha256.slice(0,12)+"…");await openCase(id)}catch(err){toast(err.message)}};
-$("note").onsubmit=async e=>{e.preventDefault();try{await req(`/api/cases/${encodeURIComponent(id)}/notes`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({body:$("noteBody").value})});await openCase(id);toast("Note saved")}catch(err){toast(err.message)}};
-$("audit").onclick=async()=>{try{$("auditText").textContent=JSON.stringify(await(await req(`/api/cases/${encodeURIComponent(id)}/audit`)).json(),null,2)}catch(err){toast(err.message)}};
- $("auditVerify").onclick=async()=>{try{let x=await(await req(`/api/cases/${encodeURIComponent(id)}/audit/integrity`)).json();$("auditText").textContent=JSON.stringify(x,null,2);toast("Audit chain: "+x.status)}catch(err){toast(err.message)}};\n$("timelineBtn").onclick=async()=>{try{let x=await(await req(`/api/cases/${encodeURIComponent(id)}/timeline`)).json();$("auditText").textContent=JSON.stringify(x,null,2)}catch(err){toast(err.message)}};\ndocument.querySelectorAll("[data-verify]").forEach(b=>b.onclick=async()=>{try{let x=await(await req(`/api/evidence/${b.dataset.verify}/integrity`)).json();b.textContent="Integrity: "+x.status.toUpperCase();toast("Integrity status: "+x.status)}catch(err){toast(err.message)}});
-document.querySelectorAll("[data-analysis]").forEach(b=>b.onclick=async()=>{try{let x=await(await req(`/api/evidence/${b.dataset.analysis}`)).json();alert(JSON.stringify({id:x.id,sha256:x.sha256,size_bytes:x.size_bytes,mime_type:x.detected_mime,analysis:x.analysis},null,2))}catch(err){toast(err.message)}});
+let selected=null;
+const $=id=>document.getElementById(id);
+const esc=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(message){const t=$("toast");t.textContent=message;t.style.display="block";setTimeout(()=>t.style.display="none",3500)}
+async function req(url,options={}){const response=await fetch(url,options);if(!response.ok){let data={};try{data=await response.json()}catch{}throw Error(data.detail||`Request failed ${response.status}`)}return response}
+async function refresh(){
+ const query=$("caseSearch")?.value.trim()||"";
+ const cases=await(await req("/api/cases"+(query?"?q="+encodeURIComponent(query):""))).json();
+ $("caseCount").textContent=cases.length;
+ $("evidenceCount").textContent=cases.reduce((sum,item)=>sum+item.evidence_count,0);
+ $("cases").innerHTML=cases.length?cases.map(item=>`<button class="case ${selected===item.id?"active":""}" data-id="${esc(item.id)}"><b>${esc(item.title)}</b><small>${esc(item.id)} · ${item.evidence_count} evidence file(s)</small></button>`).join(""):'<p class="muted">No matching cases. Create an investigation.</p>';
+ document.querySelectorAll("[data-id]").forEach(button=>button.onclick=()=>openCase(button.dataset.id));
 }
-refresh().catch(e=>toast(e.message));
+$("refresh").onclick=()=>refresh().catch(error=>toast(error.message));
+$("caseSearch")?.addEventListener("input",()=>refresh().catch(error=>toast(error.message)));
+$("caseForm").onsubmit=async event=>{
+ event.preventDefault();
+ try{const result=await(await req("/api/cases",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:$("title").value,description:$("description").value})})).json();selected=result.id;$("title").value="";$("description").value="";await refresh();await openCase(result.id);toast("Case created")}
+ catch(error){toast(error.message)}
+};
+function evCard(e){
+ let analysis={};try{analysis=JSON.parse(e.analysis_json)}catch{}
+ const media=analysis.image?`${analysis.image.width} × ${analysis.image.height} · ${analysis.image.format}`:analysis.video?`${analysis.video.width||"?"} × ${analysis.video.height||"?"} · ${analysis.video.duration_seconds??"?"} sec · ${analysis.video.sampled_frames||0} sampled frames`:"No recognized image/video metadata";
+ return `<div class="evidence"><h3>${esc(e.original_name)}</h3><span class="tag">${esc(e.id)}</span><span class="tag">${esc(e.detected_mime)}</span><p class="meta">${esc(media)} · ${Number(e.size_bytes).toLocaleString()} bytes</p><div class="hash">SHA-256: ${esc(e.sha256)}</div><p class="meta">Tags: ${esc(e.tags||"none")} · Source: ${esc(e.source_description||"not recorded")} · Collected by: ${esc(e.collected_by||"not recorded")}</p><div class="actions"><button class="secondary" data-verify="${esc(e.id)}">Verify integrity</button><button class="secondary" data-analysis="${esc(e.id)}">View analysis</button><button class="secondary" data-provenance="${esc(e.id)}">Edit provenance</button><button class="secondary" data-custody="${esc(e.id)}">Add custody event</button><button class="secondary" data-custody-view="${esc(e.id)}">View custody</button></div></div>`;
+}
+async function openCase(id){
+ selected=id;await refresh();
+ const data=await(await req(`/api/cases/${encodeURIComponent(id)}`)).json(),c=data.case;
+ $("detail").innerHTML=`<h2>${esc(c.title)}</h2><p class="meta">${esc(c.id)} · ${esc(c.created_at)}<br>${esc(c.description||"No description")}</p>
+ <div class="upload"><b>Upload evidence</b><p class="muted">Images, videos, documents, logs, PCAP and other files can be stored. Specialized analysis is optional and depends on installed tools/models.</p><form id="upload"><input type="file" id="file" required><button style="margin-top:10px">Upload & inspect</button></form></div>
+ <div class="actions"><a class="tag" href="/api/cases/${encodeURIComponent(id)}/report" target="_blank" rel="noopener">Generate PDF report</a><a class="tag" href="/api/cases/${encodeURIComponent(id)}/manifest.json" target="_blank" rel="noopener">Export JSON manifest</a><button id="correlations" class="secondary">Find correlations</button></div>
+ <h2>Evidence inventory (${data.evidence.length})</h2>${data.evidence.map(evCard).join("")||'<p class="muted">No evidence uploaded.</p>'}<hr><h2>Investigator notes</h2><form id="note"><input id="noteBody" required maxlength="5000" placeholder="Record a factual observation or follow-up task"><button style="margin-top:8px">Add note</button></form>${data.notes.map(note=>`<div class="evidence"><p>${esc(note.body)}</p><small class="meta">${esc(note.created_at)}</small></div>`).join("")||'<p class="muted">No notes recorded.</p>'}
+ <hr><h2>Audit & timeline</h2><div class="actions"><button id="audit" class="secondary">View audit log</button><button id="auditVerify" class="secondary">Verify audit chain</button><button id="timelineBtn" class="secondary">View timeline</button></div><pre id="auditText" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px"></pre>`;
+ $("upload").onsubmit=async event=>{event.preventDefault();const file=$("file").files[0];const form=new FormData();form.append("file",file);try{const result=await(await req(`/api/cases/${encodeURIComponent(id)}/evidence`,{method:"POST",body:form})).json();toast("Uploaded. SHA-256 "+result.sha256.slice(0,12)+"…");await openCase(id)}catch(error){toast(error.message)}};
+ $("note").onsubmit=async event=>{event.preventDefault();try{await req(`/api/cases/${encodeURIComponent(id)}/notes`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({body:$("noteBody").value})});await openCase(id);toast("Note saved")}catch(error){toast(error.message)}};
+ $("audit").onclick=async()=>{try{$("auditText").textContent=JSON.stringify(await(await req(`/api/cases/${encodeURIComponent(id)}/audit`)).json(),null,2)}catch(error){toast(error.message)}};
+ $("auditVerify").onclick=async()=>{try{const result=await(await req(`/api/cases/${encodeURIComponent(id)}/audit/integrity`)).json();$("auditText").textContent=JSON.stringify(result,null,2);toast("Audit chain: "+result.status)}catch(error){toast(error.message)}};
+ $("timelineBtn").onclick=async()=>{try{$("auditText").textContent=JSON.stringify(await(await req(`/api/cases/${encodeURIComponent(id)}/timeline`)).json(),null,2)}catch(error){toast(error.message)}};
+ $("correlations").onclick=async()=>{try{$("auditText").textContent=JSON.stringify(await(await req(`/api/cases/${encodeURIComponent(id)}/correlations`)).json(),null,2)}catch(error){toast(error.message)}};
+ document.querySelectorAll("[data-verify]").forEach(button=>button.onclick=async()=>{try{const result=await(await req(`/api/evidence/${button.dataset.verify}/integrity`)).json();button.textContent="Integrity: "+result.status.toUpperCase();toast("Integrity status: "+result.status)}catch(error){toast(error.message)}});
+ document.querySelectorAll("[data-analysis]").forEach(button=>button.onclick=async()=>{try{const result=await(await req(`/api/evidence/${button.dataset.analysis}`)).json();alert(JSON.stringify({id:result.id,sha256:result.sha256,size_bytes:result.size_bytes,mime_type:result.detected_mime,analysis:result.analysis},null,2))}catch(error){toast(error.message)}});
+ document.querySelectorAll("[data-provenance]").forEach(button=>button.onclick=async()=>{
+  const evidenceId=button.dataset.provenance;
+  try{const current=await(await req(`/api/evidence/${evidenceId}`)).json();
+   const tags=prompt("Comma-separated tags",current.tags||"") ;if(tags===null)return;
+   const source=prompt("Evidence source / acquisition method",current.source_description||"");if(source===null)return;
+   const handler=prompt("Collected by",current.collected_by||"");if(handler===null)return;
+   const acquired=prompt("Acquisition time (ISO 8601 recommended)",current.acquired_at||"");if(acquired===null)return;
+   await req(`/api/evidence/${evidenceId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({tags,source_description:source,collected_by:handler,acquired_at:acquired})});
+   await openCase(id);toast("Provenance saved")
+  }catch(error){toast(error.message)}
+ });
+ document.querySelectorAll("[data-custody]").forEach(button=>button.onclick=async()=>{
+  const evidenceId=button.dataset.custody;
+  try{const action=prompt("Custody action (e.g. received, transferred, sealed, examined)");if(!action)return;
+   const handler=prompt("Handler / recipient","");if(handler===null)return;
+   const location=prompt("Storage location","");if(location===null)return;
+   const details=prompt("Details (condition, reason, reference)","");if(details===null)return;
+   await req(`/api/evidence/${evidenceId}/custody`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,handler,location,details})});
+   toast("Custody event recorded");await openCase(id)
+  }catch(error){toast(error.message)}
+ });
+ document.querySelectorAll("[data-custody-view]").forEach(button=>button.onclick=async()=>{try{alert(JSON.stringify(await(await req(`/api/evidence/${button.dataset.custodyView}/custody`)).json(),null,2))}catch(error){toast(error.message)}});
+}
+$("evidenceSearch")?.addEventListener("submit",async event=>{
+ event.preventDefault();
+ const query=$("evidenceQuery").value.trim(),tag=$("evidenceTag").value.trim();
+ try{const results=await(await req("/api/evidence/search?"+new URLSearchParams({q:query,tag}))).json();$("evidenceSearchResults").innerHTML=results.length?results.map(item=>`<button class="case" data-search-case="${esc(item.case_id)}"><b>${esc(item.original_name)}</b><small>${esc(item.case_id)} · ${esc(item.tags||"no tags")} · ${esc(item.sha256.slice(0,16))}…</small></button>`).join(""):'<p class="muted">No matching evidence.</p>';document.querySelectorAll("[data-search-case]").forEach(button=>button.onclick=()=>openCase(button.dataset.searchCase))}catch(error){toast(error.message)}
+});
+refresh().catch(error=>toast(error.message));
