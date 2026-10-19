@@ -112,6 +112,48 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 - The JSON manifest is not digitally signed. Audit hash chaining provides tamper evidence, not immutability: an administrator able to rewrite the database can recompute the chain.
 - Treat all machine-generated results as leads. Independently verify detections and metadata before relying on them.
 
+## Free split deployment: GitHub Pages + FastAPI backend
+
+The repository includes a static frontend deployment workflow at `.github/workflows/pages.yml`. GitHub Pages serves only the browser UI; FastAPI must run separately on a Python host. The frontend uses `app/static/config.js` to select the API origin.
+
+### 1. Deploy the Python backend on Render (free tier)
+
+1. Sign in to [Render](https://render.com/) and choose **New → Blueprint**.
+2. Connect `codex-inn/OmniForensics-AI`, select `main`, and deploy the repository's `render.yaml`.
+3. Wait for the service to deploy. Copy the exact service origin, for example `https://your-service-name.onrender.com` (no trailing slash).
+4. In the Render service's **Environment** settings, confirm the generated `OMNIFORENSICS_USERNAME` and `OMNIFORENSICS_PASSWORD` are non-empty and private. Keep `OMNIFORENSICS_PUBLIC_MODE=true`.
+5. Set `OMNIFORENSICS_CORS_ORIGINS` to the exact browser origin for this project site: `https://codex-inn.github.io`. An origin contains scheme + hostname only; do not include `/OmniForensics-AI/`. If you use a custom domain, add that exact origin too, comma-separated.
+6. Save environment changes and wait for the backend to restart. Test `https://YOUR-SERVICE.onrender.com/api/health`; it should return JSON with `"status":"ok"`.
+
+The Render service name in `render.yaml` is a requested name, not proof that the resulting URL is available or deployed. Use the URL Render actually gives you.
+
+### 2. Configure the frontend API URL
+
+1. Open `app/static/config.js` in the GitHub repository.
+2. Change `window.OMNIFORENSICS_API_BASE = "";` to the exact Render origin, e.g. `window.OMNIFORENSICS_API_BASE = "https://YOUR-SERVICE.onrender.com";` (no trailing slash).
+3. Commit the change to `main`. The GitHub Actions Pages workflow automatically publishes the static frontend when files under `app/static/` change.
+
+### 3. Enable GitHub Pages
+
+1. In the repository, open **Settings → Pages**.
+2. Under **Build and deployment**, select **GitHub Actions** as the source.
+3. Open the **Actions** tab and wait for **Deploy GitHub Pages frontend** to finish successfully.
+4. Open `https://codex-inn.github.io/OmniForensics-AI/`. The frontend should call the Render API. On first API request, it prompts for the shared Render username/password; the credentials are kept in that browser tab's session storage, not committed into the frontend. Refresh the tab to clear them, or close it.
+5. If the page cannot connect, verify the backend URL in `config.js`, Render's deployment status, `OMNIFORENSICS_CORS_ORIGINS`, and the browser developer console. CORS values must match the actual page origin exactly.
+
+### CORS and security notes
+
+- CORS is restricted to the configured origin list; do not use wildcard origins for a credential-protected deployment. `Authorization` and `Content-Type` headers and the app's required methods are allowed for cross-origin requests.
+- The API uses HTTP Basic authentication in public mode. It is one shared account, not individual users or roles. Never place backend secrets in `config.js`, JavaScript, GitHub Pages, or source control.
+- The public health endpoint is intentionally unauthenticated for the host's health check and returns service metadata only.
+- Static Pages content is public. Anyone can view the frontend source; only the protected backend should hold case/evidence data.
+
+### Important: free-tier storage is temporary
+
+The free Render service in this repository has **no persistent disk**. SQLite data, uploaded evidence, generated reports and other local files may disappear after a restart, redeploy, sleep/wake cycle or host replacement. Free web services can also sleep and take time to wake. The GitHub Pages site remains published, but it does not store backend evidence.
+
+**Demonstration use only:** do not upload sensitive, irreplaceable, regulated, or real investigative evidence to this free configuration. For reliable use, arrange encrypted persistent storage and backups (for example, a private managed database plus private object storage), review access control and retention, and verify the storage provider's current pricing before use. The local SQLite + local-file design is not multi-instance safe.
+
 ## Deploy as a free website (Render)
 
 The repository includes `render.yaml` as a Render Blueprint for a free Python web service with health checks and generated HTTP Basic authentication credentials. This free configuration does not include a persistent disk.
