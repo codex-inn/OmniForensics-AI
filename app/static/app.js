@@ -1,135 +1,63 @@
 "use strict";
-const $ = id => document.getElementById(id);
-let reportData = null;
-const MAX_FILES = 5, MAX_BYTES = 4 * 1024 * 1024;
-function esc(value) {
-  return String(value ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
-}
-function toast(message) { $("toast").textContent = message; }
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob), a = document.createElement("a");
-  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-function ascii(bytes, start, length) {
-  return Array.from(bytes.subarray(start, Math.min(start + length, bytes.length)), b => String.fromCharCode(b)).join("");
-}
-function signature(bytes, name) {
-  const starts = (arr) => arr.every((b, i) => bytes[i] === b);
-  if (starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) return "PNG image";
-  if (starts([0xff,0xd8,0xff])) return "JPEG image";
-  if (starts([0x47,0x49,0x46,0x38,0x37,0x61]) || starts([0x47,0x49,0x46,0x38,0x39,0x61])) return "GIF image";
-  if (starts([0x25,0x50,0x44,0x46,0x2d])) return "PDF document";
-  if (starts([0x50,0x4b,0x03,0x04])) return "ZIP-based file";
-  if (starts([0x7f,0x45,0x4c,0x46])) return "ELF executable";
-  if (starts([0x4d,0x5a])) return "Windows executable";
-  if (starts([0x4f,0x67,0x67,0x53])) return "Ogg media";
-  if (starts([0x52,0x49,0x46,0x46])) return "RIFF container";
-  if (name.toLowerCase().endsWith(".txt")) return "Text file (extension only; signature not verified)";
-  return "Unknown / unrecognized signature";
-}
-async function inspectFile(file) {
-  if (file.size > MAX_BYTES) throw new Error(file.name + " exceeds the 4 MiB limit.");
-  const buffer = await file.arrayBuffer(), bytes = new Uint8Array(buffer);
-  if (!bytes.length) throw new Error(file.name + " is empty.");
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  const sha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
-  const result = { filename:file.name, size_bytes:file.size, sha256, signature_hint:signature(bytes,file.name), limitation:"A signature hint and hash do not establish authenticity, origin, identity, timeline, or criminal activity." };
-  if (["PNG image","JPEG image","GIF image"].includes(result.signature_hint)) {
-    try {
-      const bitmap = await createImageBitmap(file);
-      result.image = { width:bitmap.width, height:bitmap.height, format:result.signature_hint.replace(" image","") };
-      bitmap.close();
-    } catch (_) { result.image_parse_note = "Image dimensions could not be read by this browser."; }
-  }
-  if (result.signature_hint === "PDF document" || file.name.toLowerCase().endsWith(".pdf")) {
-    const sample = ascii(bytes, 0, Math.min(bytes.length, 2 * 1024 * 1024));
-    const pages = (sample.match(/\/Type\s*\/Page\b/g) || []).length;
-    result.pdf = { page_count_hint:pages || null, title_hint:extractPdfText(sample, /\/Title\s*\(([^)]{1,300})\)/), author_hint:extractPdfText(sample, /\/Author\s*\(([^)]{1,200})\)/), note:"Basic byte-pattern hints only; compressed or complex PDFs may not be parsed." };
-  }
-  return result;
-}
-function extractPdfText(text, pattern) { const match = text.match(pattern); return match ? match[1].replace(/\\([()\\])/g,"$1") : ""; }
-function buildReport(files = []) {
-  const observations = $("observations").value.split(/\r?\n/).map(x=>x.trim().replace(/^[•\-\t ]+/,"")).filter(Boolean);
-  const checks = [];
-  if (!$("sceneDescription").value.trim()) checks.push("Incident description was not supplied.");
-  if (!observations.length) checks.push("No investigator observations were supplied.");
-  if (!$("incidentDate").value.trim()) checks.push("Incident date/time is unspecified; verify against a trusted source.");
-  if (!$("sceneLocation").value.trim()) checks.push("Scene location is unspecified.");
-  if (!files.length) checks.push("No files were submitted for metadata and hash review.");
-  const byHash = new Map();
-  for (const f of files) { if (!byHash.has(f.sha256)) byHash.set(f.sha256, []); byHash.get(f.sha256).push(f.filename); }
-  for (const names of byHash.values()) if (names.length > 1) checks.push("Identical file bytes detected among submitted files: " + names.join(", "));
-  for (const f of files) if (f.signature_hint.startsWith("Unknown")) checks.push("No recognized leading-byte signature detected for: " + f.filename);
-  return {
-    product:"OmniForensics AI — Browser-only Scene Triage",
-    generated_at_utc:new Date().toISOString(),
-    case_reference:$("caseRef").value.trim(),
-    incident_date:$("incidentDate").value.trim(),
-    location:$("sceneLocation").value.trim(),
-    incident_type:$("incidentType").value,
-    description:$("sceneDescription").value.trim(),
-    investigator_observations:observations,
-    automated_checks_and_followups:checks,
-    files,
-    file_count:files.length,
-    privacy:{analysis_location:"This browser", files_uploaded_to_analysis_server:false, persistent_case_storage:false, database_used:false, note:"The app does not send analysis inputs or files to a backend. Device/browser/extensions/network may independently retain data."},
-    scope_note:"Educational triage only. This report does not determine that a crime occurred, identify suspects, establish cause of death, reconstruct events, or prove guilt. Human investigators must independently verify findings."
-  };
-}
-function renderReport(r) {
-  const fileHtml = r.files.map(f => "<article class='evidence'><h3>"+esc(f.filename)+"</h3><p>"+esc(f.signature_hint)+" · "+f.size_bytes+" bytes</p><p class='hash'>SHA-256: "+esc(f.sha256)+"</p>"+(f.image?"<p>Image dimensions: "+f.image.width+" × "+f.image.height+" ("+esc(f.image.format)+")</p>":"")+(f.pdf?"<p>PDF page count hint: "+esc(f.pdf.page_count_hint ?? "Not detected")+"</p><p>"+esc(f.pdf.note)+"</p>":"")+"</article>").join("");
-  $("summary").innerHTML = "<p><b>Generated (UTC):</b> "+esc(r.generated_at_utc)+"</p><p><b>Case reference:</b> "+esc(r.case_reference||"Not supplied")+"</p><p><b>Type:</b> "+esc(r.incident_type)+"</p><p><b>Location:</b> "+esc(r.location||"Not supplied")+"</p><p><b>Description:</b><br>"+esc(r.description||"No description supplied").replace(/\n/g,"<br>")+"</p><h3>Investigator observations</h3><ul>"+(r.investigator_observations.map(x=>"<li>"+esc(x)+"</li>").join("")||"<li>None supplied.</li>")+"</ul><h3>File checks</h3>"+(fileHtml||"<p>No files submitted.</p>")+"<h3>Follow-up checks</h3><ul>"+(r.automated_checks_and_followups.map(x=>"<li>"+esc(x)+"</li>").join("")||"<li>No automated flags generated. This does not prove no issues exist.</li>")+"</ul><p class='notice'>"+esc(r.scope_note)+"</p>";
-  $("report").hidden = false;
-}
-function pdfEscape(s) { return String(s).replace(/\\/g,"\\\\").replace(/\(/g,"\\(").replace(/\)/g,"\\)").replace(/[^\x20-\x7e]/g,"?"); }
-function makePdf(text) {
-  const lines = [];
-  for (const para of text.split("\n")) {
-    if (!para) { lines.push(""); continue; }
-    let remaining = para;
-    while (remaining.length > 88) { let cut = remaining.lastIndexOf(" ",88); if (cut < 30) cut = 88; lines.push(remaining.slice(0,cut)); remaining=remaining.slice(cut).trimStart(); }
-    lines.push(remaining);
-  }
-  const pageLines = lines.slice(0,48);
-  if (lines.length > 48) pageLines.push("... Report shortened in PDF; download JSON for complete data.");
-  let stream = "BT\n/F1 10 Tf\n50 755 Td\n13 TL\n";
-  for (const line of pageLines) stream += "(" + pdfEscape(line) + ") Tj\nT*\n";
-  stream += "ET";
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Length " + stream.length + " >>\nstream\n" + stream + "\nendstream"
-  ];
-  let pdf = "%PDF-1.4\n", offsets = [0];
-  for (let i=0;i<objects.length;i++) { offsets.push(pdf.length); pdf += (i+1)+" 0 obj\n"+objects[i]+"\nendobj\n"; }
-  const xref = pdf.length; pdf += "xref\n0 "+(objects.length+1)+"\n0000000000 65535 f \n";
-  for (let i=1;i<offsets.length;i++) pdf += String(offsets[i]).padStart(10,"0")+" 00000 n \n";
-  pdf += "trailer\n<< /Size "+(objects.length+1)+" /Root 1 0 R >>\nstartxref\n"+xref+"\n%%EOF";
-  return new Blob([pdf], {type:"application/pdf"});
-}
-function pdfText(r) {
-  const lines = ["OMNIFORENSICS AI","BROWSER-ONLY SCENE TRIAGE REPORT","Generated UTC: "+r.generated_at_utc,"","Case reference: "+(r.case_reference||"Not supplied"),"Incident date/time: "+(r.incident_date||"Not supplied"),"Location: "+(r.location||"Not supplied"),"Incident type: "+r.incident_type,"","Description:",r.description||"Not supplied","","Investigator observations:",...(r.investigator_observations.length?r.investigator_observations:["None supplied."]),"","FILE CHECKS"];
-  for (const f of r.files) lines.push(f.filename+" | "+f.signature_hint+" | "+f.size_bytes+" bytes","SHA-256: "+f.sha256, f.image?"Image: "+f.image.width+" x "+f.image.height:"", f.pdf?"PDF page count hint: "+(f.pdf.page_count_hint||"Not detected"):"");
-  lines.push("","FOLLOW-UP CHECKS",...(r.automated_checks_and_followups.length?r.automated_checks_and_followups:["No automated flags generated."]), "", "SCOPE & PRIVACY",r.scope_note,"Inputs are processed in this browser; no analysis server is called. Browser/device/network may retain data independently.");
-  return lines.join("\n");
-}
-$("analysisForm").addEventListener("submit", async event => {
-  event.preventDefault();
-  const button=$("analyzeBtn"); button.disabled=true; toast("Analyzing files locally in this browser…");
-  try {
-    if (!window.crypto?.subtle) throw new Error("Secure browser cryptography is unavailable. Open the HTTPS GitHub Pages site in a modern browser.");
-    const selected=Array.from($("sceneFiles").files);
-    if (selected.length>MAX_FILES) throw new Error("Select no more than 5 files.");
-    const files=[]; for (const file of selected) files.push(await inspectFile(file));
-    reportData=buildReport(files);
-    renderReport(reportData); toast("Analysis complete. Nothing was uploaded to an analysis server."); $("report").scrollIntoView({behavior:"smooth",block:"start"});
-  } catch(error) { toast(error.message || "Analysis failed."); }
-  finally { button.disabled=false; }
-});
-$("downloadJson").addEventListener("click",()=>{if(reportData)saveBlob(new Blob([JSON.stringify(reportData,null,2)],{type:"application/json;charset=utf-8"}),"omniforensics-analysis.json");});
-$("downloadPdf").addEventListener("click",()=>{if(reportData)saveBlob(makePdf(pdfText(reportData)),"omniforensics-analysis-report.pdf");});
-$("clearForm").addEventListener("click",()=>{$("analysisForm").reset();$("report").hidden=true;reportData=null;toast("Form and in-memory analysis cleared. This app does not keep case history.");});
+const $=id=>document.getElementById(id);
+const MAX_FILES=5,MAX_BYTES=4*1024*1024;
+let reportData=null, toastTimer=null;
+function notify(message){const el=$("toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),4200);}
+function escapeHtml(v){return String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function saveBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function ascii(bytes,start,length){return Array.from(bytes.subarray(start,Math.min(start+length,bytes.length)),b=>String.fromCharCode(b)).join("");}
+function signature(bytes,name){const starts=a=>a.every((b,i)=>bytes[i]===b);
+ if(starts([137,80,78,71,13,10,26,10]))return"PNG image";if(starts([255,216,255]))return"JPEG image";
+ if(starts([71,73,70,56,55,97])||starts([71,73,70,56,57,97]))return"GIF image";if(starts([37,80,68,70,45]))return"PDF document";
+ if(starts([80,75,3,4]))return"ZIP-based file";if(starts([127,69,76,70]))return"ELF executable";if(starts([77,90]))return"Windows executable";
+ if(starts([79,103,103,83]))return"Ogg media";if(starts([82,73,70,70]))return"RIFF container";if(name.toLowerCase().endsWith(".txt"))return"Text file (extension hint only)";
+ return"Unknown / unrecognized signature";}
+function fileTypeLabel(hint){if(hint.includes("image"))return"IMG";if(hint.includes("PDF"))return"PDF";if(hint.includes("ZIP"))return"ZIP";if(hint.includes("executable"))return"EXE";return"FILE";}
+async function inspectFile(file){if(file.size>MAX_BYTES)throw new Error(file.name+" exceeds the 4 MiB limit.");const buffer=await file.arrayBuffer(),bytes=new Uint8Array(buffer);if(!bytes.length)throw new Error(file.name+" is empty.");
+ const digest=await crypto.subtle.digest("SHA-256",buffer),sha256=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
+ const result={filename:file.name,size_bytes:file.size,sha256,signature_hint:signature(bytes,file.name),limitation:"A signature hint and hash do not establish authenticity, origin, identity, timeline, or criminal activity."};
+ if(["PNG image","JPEG image","GIF image"].includes(result.signature_hint)){try{const bitmap=await createImageBitmap(file);result.image={width:bitmap.width,height:bitmap.height,format:result.signature_hint.replace(" image","")};bitmap.close();}catch{result.image_parse_note="Image dimensions could not be read by this browser.";}}
+ if(result.signature_hint==="PDF document"||file.name.toLowerCase().endsWith(".pdf")){const sample=ascii(bytes,0,Math.min(bytes.length,2*1024*1024));const pages=(sample.match(/\/Type\s*\/Page\b/g)||[]).length;result.pdf={page_count_hint:pages||null,title_hint:extractPdfText(sample,/\/Title\s*\(([^)]{1,300})\)/),author_hint:extractPdfText(sample,/\/Author\s*\(([^)]{1,200})\)/),note:"Best-effort byte-pattern hint; compressed/complex PDFs may not be parsed."};}
+ return result;}
+function extractPdfText(text,re){const m=text.match(re);return m?m[1].replace(/\\([()\\])/g,"$1"):"";}
+function formObservations(){return $("observations").value.split(/\r?\n/).map(s=>s.trim().replace(/^[•\-\t ]+/,"")).filter(Boolean);}
+function buildReport(files=[]){const observations=formObservations(),checks=[];
+ if(!$("sceneDescription").value.trim())checks.push("Incident description was not supplied.");
+ if(!observations.length)checks.push("No investigator observations were supplied.");
+ if(!$("incidentDate").value.trim())checks.push("Incident date/time is unspecified; verify against a trusted source.");
+ if(!$("sceneLocation").value.trim())checks.push("Scene location is unspecified.");
+ if(!files.length)checks.push("No files were submitted for metadata and hash review.");
+ const hashes=new Map();for(const f of files){if(!hashes.has(f.sha256))hashes.set(f.sha256,[]);hashes.get(f.sha256).push(f.filename);}
+ for(const names of hashes.values())if(names.length>1)checks.push("Identical file bytes detected among submitted files: "+names.join(", "));
+ for(const f of files)if(f.signature_hint.startsWith("Unknown"))checks.push("No recognized leading-byte signature detected for: "+f.filename);
+ return{product:"OmniForensics AI — Cyber Forensics Workbench",generated_at_utc:new Date().toISOString(),case_reference:$("caseRef").value.trim(),incident_date:$("incidentDate").value.trim(),location:$("sceneLocation").value.trim(),incident_type:$("incidentType").value,description:$("sceneDescription").value.trim(),investigator_observations:observations,automated_checks_and_followups:checks,files,file_count:files.length,privacy:{analysis_location:"This browser",files_uploaded_to_analysis_server:false,persistent_case_storage:false,database_used:false,note:"The app does not send analysis inputs or files to a backend. Device/browser/extensions/network may independently retain data."},scope_note:"Educational triage only. This report does not determine that a crime occurred, identify suspects, establish cause of death, reconstruct events, or prove guilt. Human investigators must independently verify findings."};}
+function renderEvidence(files){$("navEvidenceCount").textContent=String(files.length);$("evidenceSummary").textContent=files.length?files.length+" file(s) processed in this browser.":"No files analyzed in this session.";
+ if(!files.length){$("evidenceTable").innerHTML="<div class='empty-state'><div class='empty-symbol'>⌗</div><strong>No evidence analyzed yet</strong><p>Select files above, then run analysis to see hashes and file indicators.</p></div>";return;}
+ $("evidenceTable").innerHTML=files.map(f=>{const warn=f.signature_hint.startsWith("Unknown"),chips=[f.image?("Image "+f.image.width+" × "+f.image.height):"",f.pdf?("PDF page hint: "+(f.pdf.page_count_hint||"unknown")):"",f.pdf&&f.pdf.title_hint?("Title: "+f.pdf.title_hint):"",f.pdf&&f.pdf.author_hint?("Author: "+f.pdf.author_hint):""].filter(Boolean);
+ return "<article class='evidence-item'><div class='evidence-head'><span class='file-type-icon'>"+fileTypeLabel(f.signature_hint)+"</span><div style='min-width:0;flex:1'><div class='evidence-name'>"+escapeHtml(f.filename)+"</div><div class='evidence-meta'>"+(f.size_bytes/1024).toFixed(1)+" KB · "+escapeHtml(f.signature_hint)+"</div></div><span class='evidence-badge "+(warn?"warn":"")+"'>"+(warn?"REVIEW":"CHECKED")+" </span></div><div class='hash-label'>SHA-256 HASH</div><div class='hash'>"+escapeHtml(f.sha256)+"</div><div class='evidence-details'><span class='detail-chip'>Signature hint: "+(warn?"Unrecognized":"Identified")+"</span>"+chips.map(c=>"<span class='detail-chip'>"+escapeHtml(c)+"</span>").join("")+"</div></article>";}).join("");}
+function updateDashboard(){const files=reportData?.files||[],flags=reportData?.automated_checks_and_followups||[];$("metricFiles").textContent=String(files.length).padStart(2,"0");$("metricHashes").textContent=String(files.filter(f=>f.sha256).length).padStart(2,"0");$("metricFlags").textContent=String(flags.length).padStart(2,"0");$("metricCase").textContent=$("caseRef").value.trim()||"—";$("metricFilesNote").textContent=files.length?files.length+" analyzed locally":"No files analyzed yet";$("metricFlagsNote").textContent=flags.length?"Review before export":"Human review still recommended";
+ const hasIncident=Boolean($("sceneDescription").value.trim()||$("caseRef").value.trim()||$("sceneLocation").value.trim());const rows=$("readinessList").querySelectorAll(".readiness-row");const done=[hasIncident,files.length>0,$("reportStatus").classList.contains("ready")];rows.forEach((row,i)=>{row.classList.toggle("done",done[i]);row.querySelector("b").textContent=done[i]?"Complete":"Pending";});}
+function renderPreview(r){$("reportStatus").textContent="READY TO EXPORT";$("reportStatus").classList.add("ready");$("reportPreviewBody").innerHTML="<strong>"+escapeHtml(r.case_reference||"Unreferenced session")+"</strong> · "+escapeHtml(r.incident_type)+"<div class='preview-stats'><span>Files: <b>"+r.files.length+"</b></span><span>SHA-256: <b>"+r.files.filter(f=>f.sha256).length+"</b></span><span>Follow-up flags: <b>"+r.automated_checks_and_followups.length+"</b></span></div><p>Generated "+escapeHtml(r.generated_at_utc)+" · Current session only</p>";updateDashboard();}
+function pdfEscape(s){return String(s).replace(/\\/g,"\\\\").replace(/\(/g,"\\(").replace(/\)/g,"\\)").replace(/[^\x20-\x7e]/g,"?");}
+function makePdf(text){const lines=[];for(const para of text.split("\n")){if(!para){lines.push("");continue;}let rest=para;while(rest.length>88){let cut=rest.lastIndexOf(" ",88);if(cut<30)cut=88;lines.push(rest.slice(0,cut));rest=rest.slice(cut).trimStart();}lines.push(rest);}
+ const pages=[];for(let i=0;i<lines.length;i+=48)pages.push(lines.slice(i,i+48));if(!pages.length)pages.push(["OmniForensics AI"]);
+ const objs=[];const add=o=>{objs.push(o);return objs.length;};const catalogId=add("");const pagesId=add("");const fontId=add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");const kids=[];
+ for(const pg of pages){let stream="BT\n/F1 9 Tf\n46 755 Td\n12 TL\n";for(const line of pg)stream+="("+pdfEscape(line)+") Tj\nT*\n";stream+="ET";const contentId=add("<< /Length "+stream.length+" >>\nstream\n"+stream+"\nendstream");const pageId=add("<< /Type /Page /Parent "+pagesId+" 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 "+fontId+" 0 R >> >> /Contents "+contentId+" 0 R >>");kids.push(pageId+" 0 R");}
+ objs[catalogId-1]="<< /Type /Catalog /Pages "+pagesId+" 0 R >>";objs[pagesId-1]="<< /Type /Pages /Kids ["+kids.join(" ")+"] /Count "+pages.length+" >>";
+ let pdf="%PDF-1.4\n",offsets=[0];objs.forEach((o,i)=>{offsets.push(pdf.length);pdf+=(i+1)+" 0 obj\n"+o+"\nendobj\n";});const xref=pdf.length;pdf+="xref\n0 "+(objs.length+1)+"\n0000000000 65535 f \n";for(let i=1;i<offsets.length;i++)pdf+=String(offsets[i]).padStart(10,"0")+" 00000 n \n";pdf+="trailer\n<< /Size "+(objs.length+1)+" /Root "+catalogId+" 0 R >>\nstartxref\n"+xref+"\n%%EOF";return new Blob([pdf],{type:"application/pdf"});}
+function pdfText(r){const lines=["OMNIFORENSICS AI","CYBER FORENSICS TRIAGE REPORT","Generated UTC: "+r.generated_at_utc,"","CASE CONTEXT","Reference: "+(r.case_reference||"Not supplied"),"Date/time: "+(r.incident_date||"Not supplied"),"Location: "+(r.location||"Not supplied"),"Type: "+r.incident_type,"","DESCRIPTION",r.description||"Not supplied","","INVESTIGATOR OBSERVATIONS",...(r.investigator_observations.length?r.investigator_observations:["None supplied."]),"","EVIDENCE FILES"];
+ for(const f of r.files)lines.push(f.filename+" | "+f.signature_hint+" | "+f.size_bytes+" bytes","SHA-256: "+f.sha256,f.image?"Image dimensions: "+f.image.width+" x "+f.image.height:"",f.pdf?"PDF page count hint: "+(f.pdf.page_count_hint||"Not detected"):"");
+ lines.push("","FOLLOW-UP CHECKS",...(r.automated_checks_and_followups.length?r.automated_checks_and_followups:["No automated flags generated."]), "","SCOPE & PRIVACY",r.scope_note,"Browser-only analysis. No analysis API was called.");return lines.join("\n");}
+async function runAnalysis(){if(!window.crypto?.subtle)throw new Error("Secure browser cryptography unavailable. Open the HTTPS GitHub Pages site in a modern browser.");const selected=Array.from($("sceneFiles").files);if(selected.length>MAX_FILES)throw new Error("Choose no more than 5 files.");const files=[];for(const file of selected)files.push(await inspectFile(file));reportData=buildReport(files);renderEvidence(files);renderPreview(reportData);notify("Analysis complete. Files were processed in this browser only.");}
+$("analysisForm").addEventListener("submit",async e=>{e.preventDefault();const btn=$("analyzeBtn");btn.disabled=true;btn.innerHTML="Analyzing locally…";try{await runAnalysis();document.querySelector("#evidence").scrollIntoView({behavior:"smooth",block:"start"});}catch(err){notify(err.message||"Analysis failed.");}finally{btn.disabled=false;btn.innerHTML="Run local analysis <span>→</span>";}});
+$("analyzeFilesBtn").addEventListener("click",async()=>{const btn=$("analyzeFilesBtn");btn.disabled=true;try{await runAnalysis();}catch(e){notify(e.message||"Analysis failed.");}finally{btn.disabled=false;}});
+$("sceneFiles").addEventListener("change",()=>{$("filePickerText").textContent=Array.from($("sceneFiles").files).map(f=>f.name).join(", ")||"No files selected";});
+$("downloadJson").addEventListener("click",()=>{if(!reportData){notify("Run local analysis first to prepare a report.");return;}saveBlob(new Blob([JSON.stringify(reportData,null,2)],{type:"application/json;charset=utf-8"}),"omniforensics-report.json");notify("JSON report downloaded.");});
+$("downloadPdf").addEventListener("click",()=>{if(!reportData){notify("Run local analysis first to prepare a report.");return;}saveBlob(makePdf(pdfText(reportData)),"omniforensics-report.pdf");notify("PDF report downloaded.");});
+function clearSession(){if(!$("analysisForm"))return;$("analysisForm").reset();$("sceneFiles").value="";$("filePickerText").textContent="No files selected";reportData=null;$("metricFiles").textContent="00";$("metricHashes").textContent="00";$("metricFlags").textContent="00";$("metricCase").textContent="—";$("metricFilesNote").textContent="No files analyzed yet";$("metricFlagsNote").textContent="Human review recommended";$("navEvidenceCount").textContent="0";$("evidenceSummary").textContent="No files analyzed in this session.";$("evidenceTable").innerHTML="<div class='empty-state'><div class='empty-symbol'>⌗</div><strong>No evidence analyzed yet</strong><p>Select files above, then run analysis to see hashes and file indicators.</p></div>";$("reportStatus").textContent="NOT GENERATED";$("reportStatus").classList.remove("ready");$("reportPreviewBody").textContent="Run a local analysis to prepare report data. Reports are generated on demand and are not uploaded or saved by this app.";updateDashboard();notify("Session cleared from page memory.");}
+$("clearAll").addEventListener("click",clearSession);$("topClear").addEventListener("click",clearSession);
+$("loadDemo").addEventListener("click",()=>{$("caseRef").value="OF-DEMO-001";$("incidentDate").value="2026-10-19 (demo only)";$("sceneLocation").value="Synthetic training environment";$("incidentType").value="Digital evidence review";$("sceneDescription").value="Demonstration scenario: an analyst is reviewing a sample digital artifact set. All details are fictional and for interface testing only."; $("observations").value="Demo note: validate source and acquisition method before drawing conclusions.\nDemo note: compare file hashes against a trusted, independently recorded value if one exists.";updateDashboard();notify("Synthetic demo details loaded. No evidence files were added.");$("incident").scrollIntoView({behavior:"smooth",block:"start"});});
+$("menuToggle").addEventListener("click",()=> $("sidebar").classList.toggle("open"));
+document.querySelectorAll(".nav-link").forEach(a=>a.addEventListener("click",()=>{document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));a.classList.add("active");$("pageCrumb").textContent=a.textContent.trim();$("sidebar").classList.remove("open");}));
+["caseRef","incidentDate","sceneLocation","incidentType","sceneDescription","observations"].forEach(id=>$(id).addEventListener("input",updateDashboard));
+updateDashboard();
