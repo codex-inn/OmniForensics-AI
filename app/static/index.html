@@ -1,40 +1,79 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0a111b">
-<meta name="description" content="Browser-only scene triage, file hashing and report generation. Files stay in your browser.">
-<title>OmniForensics AI — Private Scene Triage</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07111f">
+<meta name="description" content="OmniForensics AI — private, browser-only digital evidence triage and report dashboard.">
+<title>OmniForensics AI | Cyber Forensics Workbench</title>
 <link rel="stylesheet" href="styles.css">
-<style>
-#backendStatus{font-size:12px;color:var(--mint);border:1px solid #27645c;border-radius:30px;padding:7px 10px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}.wide{grid-column:1/-1}
-select{display:block;width:100%;margin-top:6px;padding:11px;background:#091521;color:var(--txt);border:1px solid #2a3d52;border-radius:9px;font:inherit}
-#report[hidden]{display:none}.report-actions{display:flex;gap:8px;flex-wrap:wrap}
-button:disabled{opacity:.6;cursor:wait}
-@media(max-width:650px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
-</style>
+<script src="app.js" defer></script>
 </head>
 <body>
-<header><div class="brand"><b>OF</b><div><strong>OmniForensics AI</strong><small>Browser-only scene triage & report generator</small></div></div><span id="backendStatus">Local processing only</span></header>
-<main>
-<section class="hero"><div><small>PRIVATE BY DESIGN · NO BACKEND</small><h1>Review scene details.<br><em>Build a clear report.</em></h1><p>Analyze selected files directly in this browser, calculate SHA-256 hashes, inspect basic file signatures and create PDF/JSON reports. No file or form data is sent to an analysis server.</p></div><aside><b>Local processing</b><p>Files are read by your browser for analysis. This app does not upload them, create an account, or keep case history.</p><p class="muted">For supported browsers, use the HTTPS GitHub Pages site.</p></aside></section>
-<div class="stats"><div><strong>0</strong> backend services</div><div><strong>SHA-256</strong> file integrity hash</div><div><strong>5 files</strong> per analysis</div><div><strong>4 MiB</strong> maximum per file</div></div>
-<form id="analysisForm" class="panel">
-<h2>Incident details</h2><div class="grid">
-<label>Case reference<input id="caseRef" maxlength="160" placeholder="e.g. DEMO-001"></label>
-<label>Incident date/time<input id="incidentDate" maxlength="100" placeholder="Date/time or unknown"></label>
-<label>Scene location<input id="sceneLocation" maxlength="300" placeholder="Location or not supplied"></label>
-<label>Incident type<select id="incidentType"><option>Unspecified</option><option>Property incident</option><option>Suspicious activity</option><option>Traffic incident</option><option>Digital evidence review</option><option>Other / under review</option></select></label>
-<label class="wide">Incident description<textarea id="sceneDescription" rows="4" maxlength="12000" placeholder="Separate reported information from verified facts."></textarea></label>
-<label class="wide">Investigator observations<textarea id="observations" rows="5" maxlength="12000" placeholder="One observation per line. Avoid unsupported conclusions."></textarea></label>
-<label class="wide">Optional files (up to 5; each up to 4 MiB)<input id="sceneFiles" type="file" multiple><small class="muted">Basic signature hints, SHA-256, image dimensions and simple PDF metadata checks. Files remain in this browser.</small></label>
-</div><button id="analyzeBtn" type="submit">Analyze locally & generate report</button><button id="clearForm" type="button" class="secondary">Clear form</button><p id="toast" role="status" aria-live="polite"></p>
-</form>
-<section id="report" class="panel" hidden><h2>Analysis report</h2><div id="summary"></div><div class="report-actions"><button id="downloadPdf" type="button">Download PDF report</button><button id="downloadJson" type="button" class="secondary">Download JSON report</button></div></section>
-<div class="notice"><b>Scope & privacy:</b> Educational triage only, not a certified forensic system. This tool does not identify suspects, determine guilt, reconstruct events, or prove a crime occurred. Hashes identify the bytes processed, not provenance or chain of custody. Analysis happens in your browser, but your browser, extensions, device, network, or downloaded files may retain data independently. Do not use public/demo devices or submit sensitive evidence unless authorized.</div>
-<footer>OmniForensics AI · GitHub Pages edition · No backend or case database</footer>
+<div class="app-shell">
+<aside class="sidebar" id="sidebar">
+  <a class="brand" href="#overview"><span class="brand-mark"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34 9v10c0 9-6 14-14 18C12 33 6 28 6 19V9z" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="m12 21 5 5 11-13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span><strong>OMNIFORENSICS</strong><small>AI WORKBENCH <i>v1.0</i></small></span></a>
+  <div class="side-label">WORKSPACE</div>
+  <nav class="nav-list" aria-label="Main navigation">
+    <a class="nav-link active" href="#overview"><span>◫</span> Overview</a>
+    <a class="nav-link" href="#incident"><span>⌁</span> Incident workspace</a>
+    <a class="nav-link" href="#evidence"><span>▤</span> Evidence analysis <b id="navEvidenceCount">0</b></a>
+    <a class="nav-link" href="#reports"><span>▧</span> Reports & export</a>
+  </nav>
+  <div class="sidebar-spacer"></div>
+  <div class="privacy-card"><div class="privacy-icon">⌑</div><strong>LOCAL-ONLY MODE</strong><p>Evidence is analyzed in this browser. No API or remote analysis server.</p><span><i></i> Browser processing active</span></div>
+  <div class="sidebar-foot"><span class="avatar">OF</span><span><strong>Forensic Analyst</strong><small>Private session · Not saved</small></span><button id="clearAll" class="icon-button" title="Clear session" aria-label="Clear session">↻</button></div>
+</aside>
+<div class="main-column">
+<header class="topbar"><button id="menuToggle" class="icon-button menu-toggle" aria-label="Toggle navigation">☰</button><div class="breadcrumbs">Workbench <span>/</span> <strong id="pageCrumb">Overview</strong></div><div class="top-actions"><span class="secure-pill"><i></i> LOCAL SESSION</span><button id="topClear" class="button button-quiet">Clear session</button></div></header>
+<main class="content">
+<section id="overview" class="page-section">
+  <div class="eyebrow"><span class="pulse-dot"></span> PRIVATE DIGITAL FORENSICS WORKSPACE</div>
+  <div class="welcome-row"><div><h1>Evidence intelligence.<br><span>Clearer investigative context.</span></h1><p class="lead">Organize incident details, inspect file indicators, and export a structured triage report — without sending evidence to a server.</p></div><button id="loadDemo" class="button button-outline">↗ Load demo data</button></div>
+  <div class="status-strip"><span class="status-check">✓</span><div><strong>Browser-only processing is enabled</strong><p>Files and case details stay in this page's memory while you work. Nothing is uploaded by this app.</p></div><span class="status-chip">NO BACKEND</span></div>
+  <div class="section-heading"><div><h2>Session overview</h2><p>Live metrics for this temporary workspace</p></div><span class="subtle-label">UPDATES DURING THIS SESSION</span></div>
+  <div class="metric-grid">
+    <article class="metric-card"><div class="metric-top"><span>Evidence files</span><span class="metric-icon cyan">▤</span></div><div class="metric-value" id="metricFiles">00</div><div class="metric-foot"><span id="metricFilesNote">No files analyzed yet</span></div></article>
+    <article class="metric-card"><div class="metric-top"><span>SHA-256 hashes</span><span class="metric-icon blue">⌗</span></div><div class="metric-value" id="metricHashes">00</div><div class="metric-foot"><span class="positive">Client-side Web Crypto</span></div></article>
+    <article class="metric-card"><div class="metric-top"><span>Follow-up flags</span><span class="metric-icon amber">⚑</span></div><div class="metric-value" id="metricFlags">00</div><div class="metric-foot"><span id="metricFlagsNote">Human review recommended</span></div></article>
+    <article class="metric-card"><div class="metric-top"><span>Case reference</span><span class="metric-icon violet">⌁</span></div><div class="metric-value metric-reference" id="metricCase">—</div><div class="metric-foot"><span>Current form only · not saved</span></div></article>
+  </div>
+  <div class="dashboard-grid">
+    <article class="surface-card quick-card"><div class="card-heading"><div><h3>Quick actions</h3><p>Continue your analysis</p></div><span class="tiny-icon">⌘</span></div><a class="quick-action" href="#incident"><span class="quick-symbol">＋</span><span><strong>Start incident review</strong><small>Enter context and observations</small></span><b>→</b></a><a class="quick-action" href="#evidence"><span class="quick-symbol">⌗</span><span><strong>Inspect evidence files</strong><small>Hash and inspect file indicators</small></span><b>→</b></a><a class="quick-action" href="#reports"><span class="quick-symbol">⇩</span><span><strong>Export investigation report</strong><small>Download PDF or JSON</small></span><b>→</b></a></article>
+    <article class="surface-card readiness-card"><div class="card-heading"><div><h3>Session readiness</h3><p>Required information checklist</p></div><span class="tiny-icon">◉</span></div><div id="readinessList" class="readiness-list"><div class="readiness-row"><span class="readiness-dot"></span><span>Incident details entered</span><b>Pending</b></div><div class="readiness-row"><span class="readiness-dot"></span><span>Evidence reviewed</span><b>Pending</b></div><div class="readiness-row"><span class="readiness-dot"></span><span>Report generated</span><b>Pending</b></div></div><div class="readiness-note">A checklist supports completeness; it does not establish evidentiary validity.</div></article>
+  </div>
+</section>
+<section id="incident" class="page-section section-block">
+  <div class="section-heading"><div><div class="eyebrow">01 / CASE CONTEXT</div><h2>Incident workspace</h2><p>Record reported facts separately from investigator observations.</p></div><span class="draft-pill">TEMPORARY SESSION</span></div>
+  <form id="analysisForm" class="surface-card form-card">
+    <div class="form-section-title"><span class="step-number">01</span><div><h3>Incident profile</h3><p>Basic identifiers and scene context</p></div></div>
+    <div class="form-grid">
+      <label>Case reference <input id="caseRef" maxlength="160" placeholder="e.g. OF-DEMO-001"></label>
+      <label>Incident date / time <input id="incidentDate" maxlength="100" placeholder="Local date/time or unknown"></label>
+      <label>Scene location <input id="sceneLocation" maxlength="300" placeholder="Location or not supplied"></label>
+      <label>Incident category <select id="incidentType"><option>Unspecified</option><option>Property incident</option><option>Suspicious activity</option><option>Traffic incident</option><option>Digital evidence review</option><option>Other / under review</option></select></label>
+      <label class="full-width">Incident description <textarea id="sceneDescription" rows="4" maxlength="12000" placeholder="Describe the reported event. Distinguish verified facts from claims and assumptions."></textarea><small>Do not enter credentials or unnecessary personal information.</small></label>
+      <label class="full-width">Investigator observations <textarea id="observations" rows="4" maxlength="12000" placeholder="One observation per line. Include source and uncertainty where known."></textarea><small>Observations are treated as user-provided notes, not independently verified facts.</small></label>
+    </div>
+    <div class="form-footer"><span class="form-hint">◈ Autosave is disabled · this session is not stored</span><button class="button button-primary" type="submit" id="analyzeBtn">Run local analysis <span>→</span></button></div>
+  </form>
+</section>
+<section id="evidence" class="page-section section-block">
+  <div class="section-heading"><div><div class="eyebrow">02 / DIGITAL ARTIFACTS</div><h2>Evidence analysis</h2><p>Inspect file signatures, SHA-256 hashes, image dimensions, and basic PDF hints.</p></div><span class="file-limit">MAX 5 FILES · 4 MiB EACH</span></div>
+  <div class="surface-card upload-card"><div class="upload-top"><div class="upload-symbol">⇧</div><div><h3>Add evidence files</h3><p>Files are read locally by this browser. They are not sent to a server.</p></div></div><label class="file-picker" for="sceneFiles"><span>Choose files</span><strong id="filePickerText">No files selected</strong><input id="sceneFiles" type="file" multiple><small>PNG, JPEG, GIF, PDF and other file types · 4 MiB per file</small></label><div class="upload-bottom"><span>SHA-256 via Web Crypto API</span><span>Local processing only</span></div></div>
+  <div class="surface-card evidence-card"><div class="card-heading"><div><h3>Analyzed artifacts</h3><p id="evidenceSummary">No files analyzed in this session.</p></div><button type="button" class="button button-outline button-small" id="analyzeFilesBtn">Analyze selected files</button></div><div id="evidenceTable" class="evidence-list"><div class="empty-state"><div class="empty-symbol">⌗</div><strong>No evidence analyzed yet</strong><p>Select files above, then run analysis to see hashes and file indicators.</p></div></div></div>
+</section>
+<section id="reports" class="page-section section-block">
+  <div class="section-heading"><div><div class="eyebrow">03 / DOCUMENTATION</div><h2>Reports & export</h2><p>Generate a portable record of the current session.</p></div><span class="draft-pill">CLIENT-SIDE EXPORT</span></div>
+  <div class="dashboard-grid report-grid">
+    <article class="surface-card export-card"><div class="export-icon pdf-icon">PDF</div><h3>Forensic triage report</h3><p>Readable summary of incident details, file indicators, hashes and follow-up checks. Basic one-page PDF; lengthy reports are shortened.</p><button id="downloadPdf" class="button button-primary" type="button">Download PDF <span>↓</span></button></article>
+    <article class="surface-card export-card"><div class="export-icon json-icon">{ }</div><h3>Structured JSON data</h3><p>Machine-readable report data for further review. Includes SHA-256 values, processing limitations and privacy notes.</p><button id="downloadJson" class="button button-outline" type="button">Download JSON <span>↓</span></button></article>
+  </div>
+  <div id="reportPreview" class="surface-card preview-card"><div class="card-heading"><div><h3>Report preview</h3><p>The report will include the current form and analyzed files.</p></div><span class="preview-status" id="reportStatus">NOT GENERATED</span></div><div id="reportPreviewBody" class="preview-body">Run a local analysis to prepare report data. Reports are generated on demand and are not uploaded or saved by this app.</div></div>
+</section>
+<div class="scope-banner"><span class="scope-icon">!</span><div><strong>Scope, privacy & evidentiary limitations</strong><p>Educational triage only — not a certified forensic acquisition system. Hashes describe the bytes processed but do not prove origin or chain of custody. File signatures and PDF metadata are best-effort hints. This tool does not identify suspects, determine guilt, reconstruct events, or prove a crime occurred. Your browser, extensions, device, or downloaded files may independently retain information.</p></div></div>
+<footer class="footer"><span>OMNIFORENSICS AI <span class="footer-dot">•</span> BROWSER-ONLY EDITION</span><span>Session memory only · No backend · No case database</span></footer>
 </main>
-<script src="app.js" defer></script>
+</div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body></html>
