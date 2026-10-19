@@ -20,7 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
 
-MAX_FILE_BYTES = int(os.getenv("OMNIFORENSICS_MAX_FILE_MB", "8")) * 1024 * 1024
+MAX_FILE_BYTES = int(os.getenv("OMNIFORENSICS_MAX_FILE_MB", "4")) * 1024 * 1024
 MAX_FILES = 5
 app = FastAPI(title="OmniForensics AI — Stateless Scene Analysis", version="1.0.0")
 STATIC = Path(__file__).parent / "static"
