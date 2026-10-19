@@ -2,10 +2,13 @@ import hashlib
 import json
 import re
 import uuid
+import os
+import secrets
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .config import ensure_dirs, EVIDENCE_DIR, REPORT_DIR, MAX_UPLOAD_BYTES
@@ -16,6 +19,40 @@ from .reports import build_report
 app = FastAPI(title="OmniForensics AI", version="0.3.0")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+@app.middleware("http")
+async def website_security(request: Request, call_next):
+    # Public deployments must configure credentials before any case/evidence route is usable.
+    public_mode = os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true"
+    if public_mode and request.url.path != "/api/health":
+        username = os.getenv("OMNIFORENSICS_USERNAME", "")
+        password = os.getenv("OMNIFORENSICS_PASSWORD", "")
+        if not username or not password:
+            response = JSONResponse({"detail": "Website access is not configured. Set OMNIFORENSICS_USERNAME and OMNIFORENSICS_PASSWORD in the hosting dashboard."}, status_code=503)
+        else:
+            header = request.headers.get("authorization", "")
+            supplied_user = supplied_password = ""
+            if header.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+                    supplied_user, supplied_password = decoded.split(":", 1)
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            valid_user = secrets.compare_digest(supplied_user, username)
+            valid_password = secrets.compare_digest(supplied_password, password)
+            if not (valid_user and valid_password):
+                response = Response("Authentication required", status_code=401,
+                                    headers={"WWW-Authenticate": 'Basic realm="OmniForensics AI", charset="UTF-8"'})
+            else:
+                response = await call_next(request)
+    else:
+        response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -78,7 +115,7 @@ class CustodyIn(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "local-first", "version": "0.3.0",
+    return {"status": "ok", "mode": "public-authenticated" if os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true" else "local-first", "version": "0.4.0",
             "max_upload_bytes": MAX_UPLOAD_BYTES,
             "features": ["sha256", "signature_hints", "image_metadata", "optional_ocr",
                          "optional_yolo_image_detection", "optional_video_sampling", "hash_linked_audit",
