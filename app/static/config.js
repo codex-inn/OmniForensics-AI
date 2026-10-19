@@ -1,4 +1,4 @@
-// Set this to your deployed FastAPI service origin, with no trailing slash.
-// Example: https://omniforensics-ai.onrender.com
-// Leave empty when using the frontend served directly by FastAPI locally.
+// Set to your deployed FastAPI service origin (no trailing slash).
+// Example: https://omniforensics-ai-xxxxx-uc.a.run.app
+// Keep empty for the local FastAPI server.
 window.OMNIFORENSICS_API_BASE = "";
