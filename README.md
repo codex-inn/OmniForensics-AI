@@ -1,32 +1,34 @@
 # OmniForensics AI — Local-First Digital Investigation Workbench
 
-An educational prototype for authorized evidence intake and review. It is designed to keep uploaded files on the local machine and to make the boundary between observed metadata and conclusions explicit.
+An educational prototype for authorized evidence intake, review and reporting. Evidence files are stored locally; there is no cloud upload feature. Run only on a trusted computer and keep the service bound to localhost.
 
-## Implemented
+## Implemented features
 
-- FastAPI web app with responsive browser interface and health endpoint.
-- Case creation/listing, evidence inventory, notes and basic case management.
-- Local evidence files and SQLite metadata; configurable upload size limit; sanitized original names.
-- SHA-256 hash recorded at intake and re-check on demand, with match, mismatch, or missing status.
-- Conservative byte-signature hints for common images, PDF, ZIP, some audio/video, PCAP and executable formats. Signature detection is a hint, not a full parser or malware scan.
+- FastAPI browser workbench with case creation, listing and text search.
+- Local evidence upload, inventory and SHA-256 intake hashes; size limits and sanitized display filenames.
+- Evidence search by filename, hash, MIME hint, source/handler text and tag; optional case filter.
+- Provenance fields for tags, source/acquisition notes, collector and acquisition time.
+- Chain-of-custody event records with handler, location, action, details, time and linked audit event hash.
+- On-demand evidence integrity check (match, mismatch, missing).
+- Conservative byte-signature hints for common images, PDF, ZIP, some audio/video, PCAP and executable formats. Not a full parser or malware scanner.
 - Image format, dimensions, color mode and available EXIF metadata.
 - Optional OCR using Tesseract + pytesseract.
-- Optional YOLO-based object detection on images when a model path is configured. Results include class labels, confidence and bounding boxes; accuracy depends on the model and image quality.
-- Optional basic video metadata and bounded sampling of up to 12 evenly spaced frames using OpenCV; if a YOLO model is configured, sampled frames can be analyzed with timestamped detections.
-- Unified chronological case timeline for uploaded evidence, notes and audit events.
-- Hash-linked audit events and an endpoint that checks the chain for tampering.
-- PDF case reports containing evidence hashes, analysis metadata, notes and audit event references.
-- Automated tests for cases, image metadata, upload, integrity, timeline, audit chain and PDF output.
-- GitHub Actions test workflow.
+- Optional YOLO object detection on images when a local model path is configured.
+- Optional OpenCV video metadata and bounded sampling of up to 12 evenly spaced frames; if YOLO is configured, sampled frames can be analyzed with timestamped detections.
+- Unified chronological timeline of evidence, notes and audit events.
+- Deterministic correlation suggestions: identical SHA-256 groups and repeated filenames within a case.
+- Hash-linked audit events with an endpoint that checks the chain.
+- PDF report and downloadable JSON manifest containing evidence hashes, analysis metadata, provenance, custody records, notes and audit event references.
+- Automated tests and GitHub Actions CI.
 
 ## Not implemented / not certified
 
-- Reliable CCTV-camera detection, full-frame video processing, continuous multi-frame tracking, audio transcription, facial recognition, or identity matching.
-- Full disk/mobile acquisition, email parsing, advanced document malware analysis, full PCAP protocol analysis, or automated cross-evidence correlation beyond a basic timestamped timeline.
-- Certified forensic acquisition, external timestamping, signed immutable audit logs, application-level encryption, user authentication, role-based access, or production multi-user deployment.
+- Full-frame CCTV analysis, continuous object tracking, reliable camera/object counting across time, audio transcription, facial recognition or identity matching.
+- Full disk/mobile acquisition, email parsing, advanced document malware analysis, full PCAP protocol analysis or automated semantic cross-evidence correlation.
+- Certified forensic acquisition, external timestamping, digitally signed/immutable audit logs, application-level encryption, user authentication, role-based access or production multi-user deployment.
 - Attribution of a person, proof of a crime, or reliable location inference from an image.
 
-## Requirements
+## Requirements and startup
 
 Python 3.10+ on Windows/macOS/Linux.
 
@@ -60,63 +62,52 @@ Open http://127.0.0.1:8000
 pytest -q
 ~~~
 
-## Optional image analysis
+## Optional analysis engines
 
 ### OCR
 
-1. Install the Tesseract OCR executable for your operating system.
-2. Install pytesseract in the active Python environment: pip install pytesseract.
-3. Set OMNIFORENSICS_ENABLE_OCR=true in your environment and restart the app.
+Install the Tesseract executable and `pytesseract`, set `OMNIFORENSICS_ENABLE_OCR=true`, then restart the app. OCR can omit or misread text.
 
-OCR may omit or misread text. Review source images.
+### Video sampling
 
-### Optional video inspection
-
-Install OpenCV in the active environment with `pip install opencv-python-headless`. Videos then receive basic width, height, frame-rate, frame-count and duration metadata. When a YOLO model is configured, at most 12 evenly spaced frames are analyzed. This sampling can miss brief events and is not continuous CCTV analytics.
+Install `opencv-python-headless`. The app reads basic video dimensions, frame rate, frame count and duration, then samples up to 12 evenly spaced frames. This can miss brief events and is not continuous CCTV analytics.
 
 ### YOLO object detection
 
-1. Install a compatible Ultralytics package in your active environment: pip install ultralytics.
-2. Obtain a model you are licensed and authorized to use, and store it locally.
-3. Set OMNIFORENSICS_YOLO_MODEL to that local model path before starting the app.
-4. Upload an image. The application will attempt detection and store labels, confidence values and bounding boxes with the evidence analysis.
+Install `ultralytics`, obtain a model you are licensed and authorized to use, and set `OMNIFORENSICS_YOLO_MODEL` to its local path. No model is bundled or downloaded automatically. Predictions are model-dependent suggestions, not proof.
 
-Example PowerShell session:
+Example PowerShell:
 
 ~~~powershell
 $env:OMNIFORENSICS_YOLO_MODEL = "C:\models\your-model.pt"
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ~~~
 
-The model path is optional. Without it, detection reports not_configured. No pretrained model is bundled or downloaded automatically. Predictions are model-dependent suggestions, not proof.
-
-## Configuration
-
-- OMNIFORENSICS_DATA_DIR: local data directory (default: repository data/).
-- OMNIFORENSICS_MAX_UPLOAD_MB: maximum upload size in MiB (default: 100).
-- OMNIFORENSICS_ENABLE_OCR: true to attempt optional OCR (default: false).
-- OMNIFORENSICS_YOLO_MODEL: optional local Ultralytics-compatible model path.
-
 ## API highlights
 
-- GET /api/health
-- GET/POST /api/cases
-- GET /api/cases/{case_id}
-- POST /api/cases/{case_id}/evidence
-- GET /api/evidence/{evidence_id}
-- GET /api/evidence/{evidence_id}/integrity
-- POST /api/cases/{case_id}/notes
-- GET /api/cases/{case_id}/timeline
-- GET /api/cases/{case_id}/audit
-- GET /api/cases/{case_id}/audit/integrity
-- GET /api/cases/{case_id}/report
+- `GET /api/health`
+- `GET/POST /api/cases` (case search: `?q=...`)
+- `GET /api/cases/{case_id}`
+- `POST /api/cases/{case_id}/evidence`
+- `GET /api/evidence/search?q=...&tag=...&case_id=...`
+- `GET /api/evidence/{evidence_id}`
+- `PATCH /api/evidence/{evidence_id}` (provenance fields)
+- `GET /api/evidence/{evidence_id}/integrity`
+- `GET/POST /api/evidence/{evidence_id}/custody`
+- `POST /api/cases/{case_id}/notes`
+- `GET /api/cases/{case_id}/timeline`
+- `GET /api/cases/{case_id}/correlations`
+- `GET /api/cases/{case_id}/manifest.json`
+- `GET /api/cases/{case_id}/audit`
+- `GET /api/cases/{case_id}/audit/integrity`
+- `GET /api/cases/{case_id}/report`
 
 ## Storage and safety
 
-- Bind to 127.0.0.1. **Do not expose this prototype to a network or the public internet**: it has no authentication, authorization or TLS.
-- Evidence is stored in data/evidence/; metadata and notes are in data/omni.sqlite.
+- Bind to `127.0.0.1`. **Do not expose this prototype to a network or the public internet**: it has no authentication, authorization or TLS.
+- Evidence is stored in `data/evidence/`; metadata and notes are stored in SQLite under the configured data directory.
 - Uploaded evidence is not encrypted by this app. Use full-disk encryption, restrict OS account access and protect backups.
-- Preserve originals and use working copies where appropriate. Record the evidence source, acquisition method, handler and times separately in your documented procedure.
-- SHA-256 matching means the current file bytes match the hash recorded by this app; it does not prove the source, author, acquisition process or truth of contents.
-- Hash-linked audit records can reveal accidental or partial modification, but an administrator who can rewrite the database can recompute the chain. This is not a cryptographically signed, immutable or independently timestamped log.
+- Preserve originals and use working copies where appropriate. Provenance and custody records help document handling but are only as reliable as the information entered by the operator.
+- SHA-256 matching means current file bytes match the intake hash recorded by this app; it does not prove source, author, acquisition process or truth of contents.
+- The JSON manifest is not digitally signed. Audit hash chaining provides tamper evidence, not immutability: an administrator able to rewrite the database can recompute the chain.
 - Treat all machine-generated results as leads. Independently verify detections and metadata before relying on them.
