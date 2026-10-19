@@ -102,4 +102,70 @@ def inspect_file(path, original_name):
                     result["object_detection"] = {"status": "unavailable", "detections": [], "detail": str(exc)[:250]}
     except (UnidentifiedImageError, OSError, ValueError):
         pass
+
+    # Optional, bounded video inspection. OpenCV is deliberately an optional dependency.
+    if signature and signature.startswith("video/"):
+        try:
+            import cv2
+            capture = cv2.VideoCapture(str(path))
+            if not capture.isOpened():
+                result["video"] = {"status": "unreadable"}
+            else:
+                fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+                frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                duration = round(frame_count / fps, 3) if fps > 0 else None
+                video_info = {"status": "metadata_only", "width": width, "height": height,
+                              "fps": round(fps, 3) if fps else None, "frame_count": frame_count,
+                              "duration_seconds": duration, "sampled_frames": 0, "detections": []}
+                model = None
+                model_path = os.getenv("OMNIFORENSICS_YOLO_MODEL", "").strip()
+                if model_path:
+                    try:
+                        from ultralytics import YOLO
+                        model = YOLO(model_path)
+                    except Exception as exc:
+                        video_info["detection_status"] = "unavailable"
+                        video_info["detection_detail"] = str(exc)[:250]
+                if frame_count > 0 and fps > 0:
+                    # At most 12 evenly spaced samples; never process every frame automatically.
+                    sample_count = min(12, frame_count)
+                    sample_indices = sorted(set(round(i * (frame_count - 1) / max(sample_count - 1, 1))
+                                                for i in range(sample_count)))
+                    for frame_index in sample_indices:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                        ok, frame = capture.read()
+                        if not ok:
+                            continue
+                        video_info["sampled_frames"] += 1
+                        if model is not None:
+                            try:
+                                predictions = model.predict(source=frame, verbose=False, conf=0.25)
+                                for prediction in predictions[:1]:
+                                    names = prediction.names
+                                    if prediction.boxes is not None:
+                                        for box in prediction.boxes:
+                                            cls_id = int(box.cls[0].item())
+                                            video_info["detections"].append({
+                                                "timestamp_seconds": round(frame_index / fps, 3),
+                                                "frame_index": frame_index,
+                                                "label": str(names.get(cls_id, cls_id)),
+                                                "confidence": round(float(box.conf[0].item()), 4),
+                                                "bbox_xyxy": [round(float(v), 2) for v in box.xyxy[0].tolist()]
+                                            })
+                            except Exception as exc:
+                                video_info["detection_status"] = "unavailable"
+                                video_info["detection_detail"] = str(exc)[:250]
+                                model = None
+                capture.release()
+                if model is not None:
+                    video_info["detection_status"] = "completed"
+                    video_info["note"] = "Only sampled frames were analyzed; missed events are possible."
+                elif not model_path:
+                    video_info["detection_status"] = "not_configured"
+                result["video"] = video_info
+        except Exception as exc:
+            result["video"] = {"status": "unavailable", "detail": str(exc)[:250],
+                               "note": "Optional dependency: pip install opencv-python-headless."}
     return result
