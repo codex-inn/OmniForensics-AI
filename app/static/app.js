@@ -1,5 +1,5 @@
 let selected=null;
-const API_BASE=String(window.OMNIFORENSICS_API_BASE||"").replace(/\\/$/,"");
+const API_BASE=String(window.OMNIFORENSICS_API_BASE||"").replace(/\/$/,"");
 const apiPath=path=>API_BASE+path;
 let authToken=sessionStorage.getItem("omni_api_auth")||"";
 function authHeader(){return authToken?{Authorization:"Basic "+authToken}:{}}
