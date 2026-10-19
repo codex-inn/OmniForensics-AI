@@ -112,14 +112,14 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 - The JSON manifest is not digitally signed. Audit hash chaining provides tamper evidence, not immutability: an administrator able to rewrite the database can recompute the chain.
 - Treat all machine-generated results as leads. Independently verify detections and metadata before relying on them.
 
-## Deploy as a website (Render)
+## Deploy as a free website (Render)
 
-The repository includes `render.yaml` as a Render Blueprint. It defines a Python web service, a persistent disk mounted at `/var/data`, health checks, and generated HTTP Basic authentication credentials. The persistent disk requires a paid Render web-service plan; the blueprint uses the Starter plan so evidence and SQLite data do not disappear when the service restarts.
+The repository includes `render.yaml` as a Render Blueprint for a free Python web service with health checks and generated HTTP Basic authentication credentials. This free configuration does not include a persistent disk.
 
 1. Push the repository to GitHub (this project is already hosted at [codex-inn/OmniForensics-AI](https://github.com/codex-inn/OmniForensics-AI)).
 2. Sign in to Render and choose **New → Blueprint**.
 3. Connect this repository and select the `main` branch.
-4. Review the service and persistent disk, then create the Blueprint.
+4. Review the free service configuration and create the Blueprint.
 5. In Render's service environment settings, confirm `OMNIFORENSICS_PUBLIC_MODE=true` and that `OMNIFORENSICS_USERNAME` and `OMNIFORENSICS_PASSWORD` have generated, non-empty secret values. If not, set strong values there before using the website.
 6. Wait for deployment to finish and open the generated `.onrender.com` URL. The browser will request the username and password.
 
@@ -129,6 +129,6 @@ The repository includes `render.yaml` as a Render Blueprint. It defines a Python
 
 - HTTP Basic authentication is a simple single-shared-login gate, not a multi-user account system or role-based access control. Use a strong password and rotate it if shared.
 - `/api/health` intentionally remains public for the hosting health check; it does not return case data.
-- The app is designed for a single service instance because SQLite and evidence files live on the persistent disk. Do not scale to multiple instances.
+- Free hosting has ephemeral local storage: uploaded evidence, SQLite records, and reports can disappear when the service restarts or redeploys. This free configuration is for demonstrations only, not reliable long-term evidence storage. Do not scale to multiple instances.
 - Treat all uploaded evidence as sensitive. This setup does not encrypt uploaded files at the application layer, does not provide per-user case permissions, and is not certified for regulated evidence. Confirm your legal, privacy, and retention requirements before uploading real case material.
 - The hosted service is public on the internet, but app routes require credentials. Do not use this as a substitute for an independently reviewed security design for high-risk evidence.
