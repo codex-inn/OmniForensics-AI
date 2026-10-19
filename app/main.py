@@ -100,6 +100,7 @@ async def upload(case_id: str, file: UploadFile = File(...)):
     stored = evidence_id + Path(name).suffix[:16]
     destination = folder / stored
     total = 0
+    evidence_recorded = False
     try:
         with destination.open("xb") as output:
             while True:
@@ -118,12 +119,15 @@ async def upload(case_id: str, file: UploadFile = File(...)):
             conn.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?)",
                 (evidence_id, case_id, name, stored, analysis["sha256"], total,
                  analysis["mime_type"], created, json.dumps(analysis, ensure_ascii=False)))
+        evidence_recorded = True
         audit(case_id, "evidence_uploaded", {"evidence_id": evidence_id, "sha256": analysis["sha256"],
                                              "size_bytes": total, "mime_type": analysis["mime_type"]})
         return {"id": evidence_id, "case_id": case_id, "original_name": name, "sha256": analysis["sha256"],
                 "size_bytes": total, "mime_type": analysis["mime_type"], "uploaded_at": created, "analysis": analysis}
     except Exception:
-        if destination.exists():
+        # Never delete the stored file after its database inventory row has committed.
+        # If later audit logging fails, retain the evidence rather than create a broken inventory.
+        if not evidence_recorded and destination.exists():
             destination.unlink()
         raise
     finally:
