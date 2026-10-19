@@ -347,6 +347,9 @@ def report(case_id: str):
             "SELECT * FROM notes WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
         audit_events = [dict(row) for row in conn.execute(
             "SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
+        for item in evidence:
+            item["custody_events"] = [dict(row) for row in conn.execute(
+                "SELECT * FROM custody WHERE evidence_id=? ORDER BY id", (item["id"],)).fetchall()]
     path = REPORT_DIR / (case_id + ".pdf")
     build_report(path, case, evidence, notes, audit_events)
     audit(case_id, "report_generated", {"filename": path.name})
