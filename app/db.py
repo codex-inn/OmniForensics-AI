@@ -6,6 +6,7 @@ def connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 def init_db():
@@ -29,6 +30,13 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS audit(
           id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT,
-          event TEXT, details_json TEXT, created_at TEXT
+          event TEXT, details_json TEXT, created_at TEXT,
+          prev_hash TEXT, event_hash TEXT
         );
         """)
+        # Safe in-place migration for databases created by earlier prototype versions.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit)")}
+        if "prev_hash" not in columns:
+            conn.execute("ALTER TABLE audit ADD COLUMN prev_hash TEXT")
+        if "event_hash" not in columns:
+            conn.execute("ALTER TABLE audit ADD COLUMN event_hash TEXT")
