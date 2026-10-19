@@ -101,7 +101,7 @@ def test_case_search_and_health_feature_list(tmp_path, monkeypatch):
         result = client.get("/api/cases", params={"q": "Network"})
         assert len(result.json()) == 1
         health = client.get("/api/health").json()
-        assert health["version"] == "0.3.0"
+        assert health["version"] == "0.4.0"
         assert "custody_log" in health["features"]
 
 def test_email_header_and_archive_triage(tmp_path, monkeypatch):
