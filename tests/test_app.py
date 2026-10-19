@@ -43,7 +43,7 @@ import io
 def test_root_serves_dashboard_with_valid_asset_paths():
     r = client.get("/")
     assert r.status_code == 200
-    assert "Cyber Forensics Workbench" in r.text
+    assert "File Investigation Lab" in r.text
     assert 'href="/static/styles.css"' in r.text
     assert 'src="/static/app.js"' in r.text
     assert client.get("/static/styles.css").status_code == 200
