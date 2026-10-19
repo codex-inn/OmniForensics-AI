@@ -38,7 +38,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 async def website_security(request: Request, call_next):
     # Public deployments must configure credentials before any case/evidence route is usable.
     public_mode = os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true"
-    if request.method == "OPTIONS":\n        response = await call_next(request)\n    elif public_mode and request.url.path != "/api/health":
+    if request.method == "OPTIONS":
+        response = await call_next(request)
+    elif public_mode and request.url.path != "/api/health":
         username = os.getenv("OMNIFORENSICS_USERNAME", "")
         password = os.getenv("OMNIFORENSICS_PASSWORD", "")
         if not username or not password:
