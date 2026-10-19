@@ -1,6 +1,6 @@
 # OmniForensics AI — Local-First Digital Investigation Workbench
 
-An educational prototype for authorized evidence intake, review and reporting. Evidence files are stored locally; there is no cloud upload feature. Run only on a trusted computer and keep the service bound to localhost.
+An educational prototype for authorized evidence intake, review and reporting. It supports local use or a split hosted setup: GitHub Pages for the static browser frontend and a separate FastAPI backend. The free hosted setup is for demos only because local backend storage is ephemeral. Read the deployment and storage limitations before uploading any files.
 
 ## Implemented features
 
@@ -25,7 +25,7 @@ An educational prototype for authorized evidence intake, review and reporting. E
 
 - Full-frame CCTV analysis, continuous object tracking, reliable camera/object counting across time, audio transcription, facial recognition or identity matching.
 - Full disk/mobile acquisition, full email body/attachment analysis, advanced document malware analysis, full PCAP protocol/stream analysis or automated semantic cross-evidence correlation.
-- Certified forensic acquisition, external timestamping, digitally signed/immutable audit logs, application-level encryption, user authentication, role-based access or production multi-user deployment.
+- Certified forensic acquisition, external timestamping, digitally signed/immutable audit logs, application-level encryption, individual user accounts, role-based access or production multi-user deployment. Hosted mode uses one shared HTTP Basic credential.
 - Attribution of a person, proof of a crime, or reliable location inference from an image.
 
 ## Requirements and startup
