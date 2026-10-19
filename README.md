@@ -58,7 +58,7 @@ gcloud run deploy omniforensics-ai --source . --region asia-south1 --allow-unaut
 ## Data handling and temporary-storage limitations
 
 - The application has no database or persistent case store. Uploaded files are sent as base64 inside the request and processed in memory; the application does not intentionally write them or generated reports to backend disk.
-- Limit: 5 files per request, each up to 8 MiB by default.
+- Limit: 5 files per request, each up to 4 MiB by default.
 - The application keeps no case history after request completion. The browser and the user's downloaded report can retain a copy.
 - **This does not guarantee zero retention throughout the hosting stack.** The provider may collect operational metadata, request/security logs or crash data. Review provider terms and configure logging/retention before submitting any sensitive information.
 - Cloud Run instances are temporary and the app does not rely on local storage. Free quotas, account requirements and prices can change; do not assume hosting is always free.
