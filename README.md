@@ -1,42 +1,33 @@
-# OmniForensics AI — GitHub Pages Edition
+# OmniForensics AI — Cyber Forensics Workbench
 
-A browser-only educational scene-triage prototype. **No Python backend, Google Cloud, Render, database, or API endpoint is required.** The website analyzes selected files locally in the browser and creates JSON/PDF reports client-side.
+A responsive, browser-only digital evidence triage dashboard hosted on GitHub Pages. No Google Cloud, Render, Python backend, API endpoint, account, database, or case-history service is required for the Pages edition.
 
 ## Live website
 
 https://codex-inn.github.io/OmniForensics-AI/
 
-If the website is not available yet, open **Settings → Pages** in this repository and set **Build and deployment → Source** to **GitHub Actions**. Then open the Actions tab and wait for **Deploy GitHub Pages frontend** to succeed.
+If changes are not visible, check the [GitHub Pages deployment workflow](https://github.com/codex-inn/OmniForensics-AI/actions) and confirm repository **Settings → Pages → Build and deployment → Source** is set to **GitHub Actions**. GitHub documents this configuration in its [Pages deployment guide](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
 
-## Browser-only features
+## Dashboard features
 
-- Enter case reference, date/time, scene location, incident type, description and investigator observations.
-- Select up to five files, each up to 4 MiB.
-- Calculate SHA-256 with the browser Web Crypto API.
-- Identify basic leading-byte signature hints for common file types.
-- Read image dimensions when the browser can decode the image.
-- Show basic PDF page-count and title/author hints where visible in the PDF bytes. This is not a full PDF parser.
-- Flag missing incident details, unknown signatures and matching file hashes.
-- Generate a downloadable JSON report and a simple PDF report in the browser.
-- No analysis request is sent to a backend; no case history or server-side file storage is implemented.
+- Professional responsive cyber/forensics dashboard with session metrics, quick navigation, readiness checklist and local-only status.
+- Incident workspace: case reference, date/time, location, incident category, description and investigator observations.
+- Evidence analysis: up to 5 files, 4 MiB each; SHA-256 hashes using Web Crypto; common leading-byte signature hints; image dimensions; basic PDF page-count/title/author byte-pattern hints.
+- Follow-up checklist for missing context, unknown signatures and identical file hashes.
+- Client-side PDF and JSON report downloads.
+- Synthetic demo details for previewing the dashboard.
+- Clear session control; no automatic saving, localStorage, case database or backend requests.
 
 ## Privacy and limitations
 
-Files are read by JavaScript in the user's browser and are not uploaded by this application. Analysis results are held in page memory until cleared or the page is closed. This is not a guarantee that the user's device, browser, extensions, network, screenshots, or downloaded reports retain nothing. Use a trusted device and authorized demo data.
+Files are read in the browser and are not uploaded by this app. Analysis data is held in page memory until cleared or the page is closed. The user's device, browser, extensions, network, screenshots, and downloaded reports may independently retain information; this is not a guarantee of zero retention. Use a trusted device and authorized demo data.
 
-This is educational triage, not a certified forensic acquisition or examination system. File signatures are only hints. Hashes describe the exact bytes processed but do not prove provenance or chain of custody. PDF metadata/page-count checks are best-effort pattern checks and may miss compressed or complex documents. The app does not identify suspects, determine guilt, establish cause of death, reconstruct events, or prove that a crime occurred. Independently verify findings.
+This is an educational triage aid, not a certified forensic acquisition system. Signature and PDF metadata checks are best-effort hints; complex PDFs may not be parsed correctly. SHA-256 identifies the bytes processed but does not prove provenance or chain of custody. The tool does not identify suspects, determine guilt, reconstruct events, or prove that a crime occurred. Independently verify all findings.
 
 ## Deployment
 
-GitHub Actions publishes the contents of `app/static/` to GitHub Pages on pushes to `main`. The page uses relative static asset paths and works without a backend. In GitHub, go to **Settings → Pages → Build and deployment → GitHub Actions** if Pages is not already configured.
+GitHub Actions publishes the contents of `app/static/` to GitHub Pages when relevant files change on `main`. All asset paths are relative to the project site, so they work at the repository URL above. The source HTML, CSS, and JavaScript live in `app/static/`.
 
-## Optional local Python backend
+## Optional Python backend files
 
-The Python/FastAPI files remain in the repository for development/reference, but they are **not used by the GitHub Pages edition**. To run the optional server locally, install Python 3.10+ and run:
-
-~~~bash
-python -m pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-~~~
-
-Do not configure the public Pages frontend to call this backend; browser-only mode intentionally makes no network API requests.
+Python/FastAPI files remain in the repository for development/reference only. They are not used by the GitHub Pages frontend and are not needed to run this version.
