@@ -1,3 +1,4 @@
+import hashlib
 import json, re, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from .db import connect, init_db
 from .forensics import inspect_file, sha256_file
 from .reports import build_report
 
-app = FastAPI(title="OmniForensics AI", version="0.1.0")
+app = FastAPI(title="OmniForensics AI", version="0.2.0")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
@@ -18,9 +19,17 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 def audit(case_id, event, details):
+    created = now()
+    details_json = json.dumps(details, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     with connect() as conn:
-        conn.execute("INSERT INTO audit(case_id,event,details_json,created_at) VALUES(?,?,?,?)",
-                     (case_id, event, json.dumps(details), now()))
+        previous = conn.execute("SELECT event_hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
+        prev_hash = previous["event_hash"] if previous and previous["event_hash"] else "GENESIS"
+        payload = json.dumps({"case_id": case_id, "event": event, "details_json": details_json,
+                              "created_at": created, "prev_hash": prev_hash},
+                             sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        event_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        conn.execute("INSERT INTO audit(case_id,event,details_json,created_at,prev_hash,event_hash) VALUES(?,?,?,?,?,?)",
+                     (case_id, event, details_json, created, prev_hash, event_hash))
 
 def case_or_404(case_id):
     with connect() as conn:
@@ -47,7 +56,9 @@ class NoteIn(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "local-first", "max_upload_bytes": MAX_UPLOAD_BYTES}
+    return {"status": "ok", "mode": "local-first", "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "features": ["sha256", "signature_hints", "image_metadata", "optional_ocr",
+                         "optional_yolo_image_detection", "hash_linked_audit", "case_timeline", "pdf_report"]}
 
 @app.post("/api/cases")
 def create_case(data: CaseIn):
@@ -107,7 +118,8 @@ async def upload(case_id: str, file: UploadFile = File(...)):
             conn.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?)",
                 (evidence_id, case_id, name, stored, analysis["sha256"], total,
                  analysis["mime_type"], created, json.dumps(analysis, ensure_ascii=False)))
-        audit(case_id, "evidence_uploaded", {"evidence_id": evidence_id, "sha256": analysis["sha256"], "size_bytes": total})
+        audit(case_id, "evidence_uploaded", {"evidence_id": evidence_id, "sha256": analysis["sha256"],
+                                             "size_bytes": total, "mime_type": analysis["mime_type"]})
         return {"id": evidence_id, "case_id": case_id, "original_name": name, "sha256": analysis["sha256"],
                 "size_bytes": total, "mime_type": analysis["mime_type"], "uploaded_at": created, "analysis": analysis}
     except Exception:
@@ -136,11 +148,13 @@ def verify(evidence_id: str):
     item = dict(row)
     path = EVIDENCE_DIR / item["case_id"] / item["stored_name"]
     if not path.exists():
-        return {"evidence_id": evidence_id, "status": "missing", "expected_sha256": item["sha256"], "actual_sha256": None}
-    actual = sha256_file(path)
-    status = "match" if actual == item["sha256"] else "mismatch"
-    audit(item["case_id"], "integrity_check", {"evidence_id": evidence_id, "status": status})
-    return {"evidence_id": evidence_id, "status": status, "expected_sha256": item["sha256"], "actual_sha256": actual}
+        result = {"evidence_id": evidence_id, "status": "missing", "expected_sha256": item["sha256"], "actual_sha256": None}
+    else:
+        actual = sha256_file(path)
+        result = {"evidence_id": evidence_id, "status": "match" if actual == item["sha256"] else "mismatch",
+                  "expected_sha256": item["sha256"], "actual_sha256": actual}
+    audit(item["case_id"], "integrity_check", {"evidence_id": evidence_id, "status": result["status"]})
+    return result
 
 @app.post("/api/cases/{case_id}/notes")
 def add_note(case_id: str, data: NoteIn):
@@ -162,6 +176,38 @@ def audit_list(case_id: str):
         rows = conn.execute("SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()
     return [dict(row) for row in rows]
 
+@app.get("/api/cases/{case_id}/audit/integrity")
+def audit_integrity(case_id: str):
+    case_or_404(case_id)
+    with connect() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM audit ORDER BY id").fetchall()]
+    previous = "GENESIS"
+    checked = 0
+    for row in rows:
+        payload = json.dumps({"case_id": row["case_id"], "event": row["event"],
+                              "details_json": row["details_json"], "created_at": row["created_at"],
+                              "prev_hash": previous}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if row.get("prev_hash") != previous or row.get("event_hash") != expected:
+            return {"status": "tampered_or_legacy", "checked_events": checked, "failed_event_id": row["id"],
+                    "note": "Older audit rows created before hash chaining are not retroactively signed."}
+        previous = row["event_hash"]
+        checked += 1
+    return {"status": "verified", "checked_events": checked,
+            "note": "Hash-linked tamper evidence only; database administrators can rewrite the entire chain."}
+
+@app.get("/api/cases/{case_id}/timeline")
+def timeline(case_id: str):
+    case_or_404(case_id)
+    with connect() as conn:
+        evidence = conn.execute("SELECT id AS ref_id, original_name AS label, uploaded_at AS timestamp FROM evidence WHERE case_id=?", (case_id,)).fetchall()
+        notes = conn.execute("SELECT id AS ref_id, substr(body,1,180) AS label, created_at AS timestamp FROM notes WHERE case_id=?", (case_id,)).fetchall()
+        events = conn.execute("SELECT id AS ref_id, event AS label, created_at AS timestamp FROM audit WHERE case_id=?", (case_id,)).fetchall()
+    items = ([{"type": "evidence", **dict(row)} for row in evidence] +
+             [{"type": "note", **dict(row)} for row in notes] +
+             [{"type": "audit", **dict(row)} for row in events])
+    return sorted(items, key=lambda item: item["timestamp"])
+
 @app.get("/api/cases/{case_id}/report")
 def report(case_id: str):
     case = case_or_404(case_id)
@@ -170,7 +216,9 @@ def report(case_id: str):
             "SELECT * FROM evidence WHERE case_id=? ORDER BY uploaded_at", (case_id,)).fetchall()]
         notes = [dict(row) for row in conn.execute(
             "SELECT * FROM notes WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
+        audit_events = [dict(row) for row in conn.execute(
+            "SELECT * FROM audit WHERE case_id=? ORDER BY id", (case_id,)).fetchall()]
     path = REPORT_DIR / (case_id + ".pdf")
-    build_report(path, case, evidence, notes)
+    build_report(path, case, evidence, notes, audit_events)
     audit(case_id, "report_generated", {"filename": path.name})
     return FileResponse(path, media_type="application/pdf", filename=case_id + "-forensic-report.pdf")
