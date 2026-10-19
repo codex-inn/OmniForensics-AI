@@ -12,6 +12,7 @@ An educational prototype for authorized evidence intake and review. It is design
 - Image format, dimensions, color mode and available EXIF metadata.
 - Optional OCR using Tesseract + pytesseract.
 - Optional YOLO-based object detection on images when a model path is configured. Results include class labels, confidence and bounding boxes; accuracy depends on the model and image quality.
+- Optional basic video metadata and bounded sampling of up to 12 evenly spaced frames using OpenCV; if a YOLO model is configured, sampled frames can be analyzed with timestamped detections.
 - Unified chronological case timeline for uploaded evidence, notes and audit events.
 - Hash-linked audit events and an endpoint that checks the chain for tampering.
 - PDF case reports containing evidence hashes, analysis metadata, notes and audit event references.
@@ -20,7 +21,7 @@ An educational prototype for authorized evidence intake and review. It is design
 
 ## Not implemented / not certified
 
-- Reliable CCTV-camera detection or complete video/CCTV analytics, multi-frame tracking, audio transcription, facial recognition, or identity matching.
+- Reliable CCTV-camera detection, full-frame video processing, continuous multi-frame tracking, audio transcription, facial recognition, or identity matching.
 - Full disk/mobile acquisition, email parsing, advanced document malware analysis, full PCAP protocol analysis, or automated cross-evidence correlation beyond a basic timestamped timeline.
 - Certified forensic acquisition, external timestamping, signed immutable audit logs, application-level encryption, user authentication, role-based access, or production multi-user deployment.
 - Attribution of a person, proof of a crime, or reliable location inference from an image.
@@ -68,6 +69,10 @@ pytest -q
 3. Set OMNIFORENSICS_ENABLE_OCR=true in your environment and restart the app.
 
 OCR may omit or misread text. Review source images.
+
+### Optional video inspection
+
+Install OpenCV in the active environment with `pip install opencv-python-headless`. Videos then receive basic width, height, frame-rate, frame-count and duration metadata. When a YOLO model is configured, at most 12 evenly spaced frames are analyzed. This sampling can miss brief events and is not continuous CCTV analytics.
 
 ### YOLO object detection
 
