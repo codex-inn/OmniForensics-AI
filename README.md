@@ -22,7 +22,7 @@ If changes are not visible, check the [GitHub Pages deployment workflow](https:/
 
 Files are read in the browser and are not uploaded by this app. Analysis data is held in page memory until cleared or the page is closed. The user's device, browser, extensions, network, screenshots, and downloaded reports may independently retain information; this is not a guarantee of zero retention. Use a trusted device and authorized demo data.
 
-This is an educational triage aid, not a certified forensic acquisition system. Signature and PDF metadata checks are best-effort hints; complex PDFs may not be parsed correctly. SHA-256 identifies the bytes processed but does not prove provenance or chain of custody. The tool does not identify suspects, determine guilt, reconstruct events, or prove that a crime occurred. Independently verify all findings.
+This is a rule-based educational triage aid, not a certified forensic acquisition system. The browser-only edition does not use an AI/ML model despite the product name. Signature and PDF metadata checks are best-effort hints; complex PDFs may not be parsed correctly. SHA-256 identifies the bytes processed but does not prove provenance or chain of custody. The tool does not identify suspects, determine guilt, reconstruct events, or prove that a crime occurred. Independently verify all findings.
 
 ## Deployment
 
