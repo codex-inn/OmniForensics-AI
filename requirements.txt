@@ -1,0 +1,1 @@
+fastapi>=0.115,<1.0\nuvicorn[standard]>=0.30,<1.0\npython-multipart>=0.0.9\nPillow>=10.0\nreportlab>=4.0\npytest>=8.0\nhttpx>=0.27\n
