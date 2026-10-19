@@ -8,6 +8,7 @@ import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -16,7 +17,20 @@ from .db import connect, init_db
 from .forensics import inspect_file, sha256_file
 from .reports import build_report
 
-app = FastAPI(title="OmniForensics AI", version="0.3.0")
+app = FastAPI(title="OmniForensics AI", version="0.4.0")
+
+# Set OMNIFORENSICS_CORS_ORIGINS to a comma-separated list of exact browser origins.
+# GitHub Pages project sites use the origin https://codex-inn.github.io (no repo path).
+_default_origins = "https://codex-inn.github.io,http://localhost:8000,http://127.0.0.1:8000"
+_allowed_origins = [origin.strip().rstrip("/") for origin in os.getenv("OMNIFORENSICS_CORS_ORIGINS", _default_origins).split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
+)
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
@@ -24,7 +38,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 async def website_security(request: Request, call_next):
     # Public deployments must configure credentials before any case/evidence route is usable.
     public_mode = os.getenv("OMNIFORENSICS_PUBLIC_MODE", "false").lower() == "true"
-    if public_mode and request.url.path != "/api/health":
+    if request.method == "OPTIONS":\n        response = await call_next(request)\n    elif public_mode and request.url.path != "/api/health":
         username = os.getenv("OMNIFORENSICS_USERNAME", "")
         password = os.getenv("OMNIFORENSICS_PASSWORD", "")
         if not username or not password:
