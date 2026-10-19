@@ -21,7 +21,11 @@ def init_db():
           original_name TEXT NOT NULL, stored_name TEXT NOT NULL,
           sha256 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
           detected_mime TEXT NOT NULL, uploaded_at TEXT NOT NULL,
-          analysis_json TEXT NOT NULL
+          analysis_json TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '',
+          source_description TEXT NOT NULL DEFAULT '',
+          collected_by TEXT NOT NULL DEFAULT '',
+          acquired_at TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS notes(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,10 +37,27 @@ def init_db():
           event TEXT, details_json TEXT, created_at TEXT,
           prev_hash TEXT, event_hash TEXT
         );
+        CREATE TABLE IF NOT EXISTS custody(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          evidence_id TEXT NOT NULL REFERENCES evidence(id),
+          action TEXT NOT NULL,
+          handler TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          details TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          audit_event_hash TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_evidence_case ON evidence(case_id);
+        CREATE INDEX IF NOT EXISTS idx_evidence_hash ON evidence(sha256);
+        CREATE INDEX IF NOT EXISTS idx_custody_evidence ON custody(evidence_id, id);
         """)
-        # Safe in-place migration for databases created by earlier prototype versions.
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit)")}
-        if "prev_hash" not in columns:
+        # Migrate databases created by earlier prototype versions.
+        audit_columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit)")}
+        if "prev_hash" not in audit_columns:
             conn.execute("ALTER TABLE audit ADD COLUMN prev_hash TEXT")
-        if "event_hash" not in columns:
+        if "event_hash" not in audit_columns:
             conn.execute("ALTER TABLE audit ADD COLUMN event_hash TEXT")
+        evidence_columns = {row["name"] for row in conn.execute("PRAGMA table_info(evidence)")}
+        for column in ("tags", "source_description", "collected_by", "acquired_at"):
+            if column not in evidence_columns:
+                conn.execute(f"ALTER TABLE evidence ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
