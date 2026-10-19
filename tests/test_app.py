@@ -1,7 +1,8 @@
 import os
+import json
 from pathlib import Path
-from PIL import Image
 from io import BytesIO
+from PIL import Image
 from fastapi.testclient import TestClient
 
 def setup_client(tmp_path, monkeypatch):
@@ -39,7 +40,6 @@ def test_case_upload_hash_timeline_audit_and_report(tmp_path, monkeypatch):
         report = client.get(f"/api/cases/{case_id}/report")
         assert report.status_code == 200
         assert report.headers["content-type"] == "application/pdf"
-        # A report containing user-supplied angle brackets should render rather than break PDF markup.
         assert report.content.startswith(b"%PDF")
         assert client.get(f"/api/cases/{case_id}/audit/integrity").json()["status"] == "verified"
 
@@ -62,3 +62,44 @@ def test_empty_upload_rejected(tmp_path, monkeypatch):
         response = client.post(f"/api/cases/{case_id}/evidence",
             files={"file": ("empty.txt", b"", "text/plain")})
         assert response.status_code == 400
+
+def test_evidence_provenance_custody_search_manifest_and_correlations(tmp_path, monkeypatch):
+    with setup_client(tmp_path, monkeypatch) as client:
+        case_id = client.post("/api/cases", json={"title": "Evidence case"}).json()["id"]
+        payload = b"same exact evidence bytes"
+        first = client.post(f"/api/cases/{case_id}/evidence", files={"file": ("capture.log", payload, "text/plain")}).json()
+        second = client.post(f"/api/cases/{case_id}/evidence", files={"file": ("copy.log", payload, "text/plain")}).json()
+        evidence_id = first["id"]
+        updated = client.patch(f"/api/evidence/{evidence_id}", json={
+            "tags": "network, incident, network", "source_description": "Authorized lab export",
+            "collected_by": "Investigator A", "acquired_at": "2026-10-19T10:00:00+05:30"})
+        assert updated.status_code == 200
+        assert updated.json()["tags"] == "network,incident"
+        custody = client.post(f"/api/evidence/{evidence_id}/custody", json={
+            "action": "Transferred to secure storage", "handler": "Investigator A",
+            "location": "Local evidence folder", "details": "Read-only working copy prepared"})
+        assert custody.status_code == 200
+        assert custody.json()["audit_event_hash"]
+        assert len(client.get(f"/api/evidence/{evidence_id}/custody").json()) == 1
+        search = client.get("/api/evidence/search", params={"q": "capture", "tag": "network", "case_id": case_id})
+        assert search.status_code == 200 and len(search.json()) == 1
+        correlations = client.get(f"/api/cases/{case_id}/correlations").json()
+        assert len(correlations["duplicate_hash_groups"]) == 1
+        assert {x["id"] for x in correlations["duplicate_hash_groups"][0]["items"]} == {evidence_id, second["id"]}
+        manifest = client.get(f"/api/cases/{case_id}/manifest.json")
+        assert manifest.status_code == 200
+        assert "attachment;" in manifest.headers.get("content-disposition", "")
+        document = manifest.json()
+        assert document["evidence"][0]["sha256_at_intake"]
+        assert document["evidence"][0]["custody"][0]["action"] == "Transferred to secure storage"
+        assert any(e["event"] == "custody_event" for e in document["audit_events"])
+
+def test_case_search_and_health_feature_list(tmp_path, monkeypatch):
+    with setup_client(tmp_path, monkeypatch) as client:
+        client.post("/api/cases", json={"title": "Network Incident", "description": "authorized capture"})
+        client.post("/api/cases", json={"title": "Photo Review"})
+        result = client.get("/api/cases", params={"q": "Network"})
+        assert len(result.json()) == 1
+        health = client.get("/api/health").json()
+        assert health["version"] == "0.3.0"
+        assert "custody_log" in health["features"]
