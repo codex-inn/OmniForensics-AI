@@ -26,7 +26,7 @@ This is an educational triage aid, not a certified forensic acquisition system. 
 
 ## Deployment
 
-GitHub Actions publishes the contents of `app/static/` to GitHub Pages when relevant files change on `main`. All asset paths are relative to the project site, so they work at the repository URL above. The source HTML, CSS, and JavaScript live in `app/static/`.
+The dedicated GitHub Actions workflow (`.github/workflows/pages.yml`) publishes only the contents of `app/static/` to GitHub Pages when frontend files change on `main`. All asset paths are relative to the project site, so they work at the repository URL above. The source HTML, CSS, and JavaScript live in `app/static/`.
 
 ## Optional Python backend files
 
