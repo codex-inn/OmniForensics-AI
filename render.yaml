@@ -18,6 +18,8 @@ services:
         value: 100
       - key: OMNIFORENSICS_PUBLIC_MODE
         value: true
+      - key: OMNIFORENSICS_CORS_ORIGINS
+        value: https://codex-inn.github.io
       - key: OMNIFORENSICS_USERNAME
         generateValue: true
       - key: OMNIFORENSICS_PASSWORD
