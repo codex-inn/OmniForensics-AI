@@ -154,23 +154,6 @@ The free Render service in this repository has **no persistent disk**. SQLite da
 
 **Demonstration use only:** do not upload sensitive, irreplaceable, regulated, or real investigative evidence to this free configuration. For reliable use, arrange encrypted persistent storage and backups (for example, a private managed database plus private object storage), review access control and retention, and verify the storage provider's current pricing before use. The local SQLite + local-file design is not multi-instance safe.
 
-## Deploy as a free website (Render)
+## Local-only deployment
 
-The repository includes `render.yaml` as a Render Blueprint for a free Python web service with health checks and generated HTTP Basic authentication credentials. This free configuration does not include a persistent disk.
-
-1. Push the repository to GitHub (this project is already hosted at [codex-inn/OmniForensics-AI](https://github.com/codex-inn/OmniForensics-AI)).
-2. Sign in to Render and choose **New → Blueprint**.
-3. Connect this repository and select the `main` branch.
-4. Review the free service configuration and create the Blueprint.
-5. In Render's service environment settings, confirm `OMNIFORENSICS_PUBLIC_MODE=true` and that `OMNIFORENSICS_USERNAME` and `OMNIFORENSICS_PASSWORD` have generated, non-empty secret values. If not, set strong values there before using the website.
-6. Wait for deployment to finish and open the generated `.onrender.com` URL. The browser will request the username and password.
-
-**Do not put access credentials in GitHub or share them in chat.** If you lose the generated credentials, rotate them in Render's environment settings.
-
-### Public deployment limits
-
-- HTTP Basic authentication is a simple single-shared-login gate, not a multi-user account system or role-based access control. Use a strong password and rotate it if shared.
-- `/api/health` intentionally remains public for the hosting health check; it does not return case data.
-- Free hosting has ephemeral local storage: uploaded evidence, SQLite records, and reports can disappear when the service restarts or redeploys. This free configuration is for demonstrations only, not reliable long-term evidence storage. Do not scale to multiple instances.
-- Treat all uploaded evidence as sensitive. This setup does not encrypt uploaded files at the application layer, does not provide per-user case permissions, and is not certified for regulated evidence. Confirm your legal, privacy, and retention requirements before uploading real case material.
-- The hosted service is public on the internet, but app routes require credentials. Do not use this as a substitute for an independently reviewed security design for high-risk evidence.
+For local use, run the FastAPI app using the startup steps above and open `http://127.0.0.1:8000`. The split GitHub Pages + free backend deployment guide above is the supported hosted setup. Do not expose the local-only server directly to the internet.
