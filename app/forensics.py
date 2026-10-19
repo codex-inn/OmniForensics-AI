@@ -1,6 +1,10 @@
 import hashlib
 import mimetypes
 import os
+import struct
+import zipfile
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
@@ -54,6 +58,61 @@ def inspect_file(path, original_name):
                       ("application/zip", "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
         if (signature, guessed) not in compatible:
             result["warnings"].append("File extension MIME type differs from its detected byte signature; inspect manually.")
+    # Read bounded metadata only; never extract archives or execute embedded content.
+    result["document"] = None
+    result["archive"] = None
+    result["email"] = None
+    result["pcap"] = None
+    suffix = Path(original_name).suffix.lower()
+    if suffix == ".pdf" and signature == "application/pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(path), strict=False)
+            metadata = reader.metadata
+            result["document"] = {"type": "pdf", "page_count": len(reader.pages),
+                "metadata": {str(k).lstrip("/"): str(v)[:500] for k, v in (metadata or {}).items() if v is not None},
+                "encrypted": bool(reader.is_encrypted)}
+        except ImportError:
+            result["document"] = {"type": "pdf", "status": "metadata_parser_not_installed", "detail": "Optional: install pypdf for PDF metadata."}
+        except Exception as exc:
+            result["document"] = {"type": "pdf", "status": "unavailable", "detail": str(exc)[:200]}
+    if signature == "application/zip":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                entries = archive.infolist()
+                result["archive"] = {"status": "listed", "entry_count": len(entries),
+                    "entries_preview": [{"name": entry.filename[:240], "size_bytes": entry.file_size, "compressed_bytes": entry.compress_size} for entry in entries[:100]],
+                    "truncated": len(entries) > 100, "note": "Names and sizes only; members were not extracted or executed."}
+                if suffix in {".docx", ".xlsx", ".pptx"}:
+                    result["document"] = {"type": suffix[1:], "status": "office_container_detected", "entry_count": len(entries)}
+        except (zipfile.BadZipFile, OSError, RuntimeError):
+            result["archive"] = {"status": "invalid_or_unreadable"}
+    if suffix in {".eml", ".mime"}:
+        try:
+            with open(path, "rb") as stream:
+                message = BytesParser(policy=policy.default).parse(stream, headersonly=True)
+            result["email"] = {"status": "headers_parsed", "subject": str(message.get("subject", ""))[:500],
+                "from": str(message.get("from", ""))[:500], "to": str(message.get("to", ""))[:500],
+                "cc": str(message.get("cc", ""))[:500], "date": str(message.get("date", ""))[:200],
+                "message_id": str(message.get("message-id", ""))[:300],
+                "header_names": list(dict.fromkeys(str(k)[:100] for k in message.keys()))[:100],
+                "note": "Headers can be forged; body and attachments are not analyzed."}
+        except Exception as exc:
+            result["email"] = {"status": "unavailable", "detail": str(exc)[:200]}
+    if signature == "application/vnd.tcpdump.pcap":
+        try:
+            with open(path, "rb") as stream:
+                header = stream.read(24)
+            if header.startswith(bytes.fromhex("0a0d0d0a")):
+                result["pcap"] = {"format": "pcapng", "status": "container_detected", "note": "Packet blocks are not parsed by this basic triage module."}
+            elif len(header) >= 24:
+                magic = header[:4]
+                endian = "<" if magic in (bytes.fromhex("d4c3b2a1"), bytes.fromhex("4d3cb2a1")) else ">"
+                major, minor, _zone, _sigfigs, snaplen, network = struct.unpack(endian + "HHIIII", header[4:24])
+                result["pcap"] = {"format": "pcap", "version": f"{major}.{minor}", "snaplen": snaplen, "link_type": network,
+                    "note": "Global header only; packet streams and protocol content are not decoded."}
+        except (OSError, struct.error):
+            result["pcap"] = {"status": "invalid_or_truncated"}
     try:
         with Image.open(path) as image:
             image.verify()
