@@ -103,3 +103,21 @@ def test_case_search_and_health_feature_list(tmp_path, monkeypatch):
         health = client.get("/api/health").json()
         assert health["version"] == "0.3.0"
         assert "custody_log" in health["features"]
+
+def test_email_header_and_archive_triage(tmp_path, monkeypatch):
+    import zipfile
+    archive_buffer = BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("sample.txt", "safe test data")
+    email_bytes = b"From: sender@example.test\r\nTo: receiver@example.test\r\nSubject: Test case\r\nMessage-ID: <test-1@example.test>\r\n\r\nbody"
+    with setup_client(tmp_path, monkeypatch) as client:
+        case_id = client.post("/api/cases", json={"title": "File triage"}).json()["id"]
+        email = client.post(f"/api/cases/{case_id}/evidence", files={"file": ("sample.eml", email_bytes, "message/rfc822")})
+        assert email.status_code == 200
+        assert email.json()["analysis"]["email"]["status"] == "headers_parsed"
+        assert email.json()["analysis"]["email"]["subject"] == "Test case"
+        zipped = client.post(f"/api/cases/{case_id}/evidence", files={"file": ("sample.zip", archive_buffer.getvalue(), "application/zip")})
+        assert zipped.status_code == 200
+        triage = zipped.json()["analysis"]["archive"]
+        assert triage["status"] == "listed"
+        assert triage["entries_preview"][0]["name"] == "sample.txt"
