@@ -63,7 +63,9 @@ async def security(request: Request, call_next):
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return (STATIC / "index.html").read_text(encoding="utf-8")
+    # The Pages edition uses relative asset paths; the optional API serves those assets under /static.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    return html.replace('href="styles.css"', 'href="/static/styles.css"').replace('src="app.js"', 'src="/static/app.js"')
 
 @app.get("/api/health")
 def health():
